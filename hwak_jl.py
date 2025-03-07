@@ -34,9 +34,6 @@ kap=1.0
 C=1.0
 nu=5e-2
 D=5e-2
-mu1=1e2
-mu0=0.0
-sig=Lx/100
 u=mlsarray(Npx,Npy)
 
 #%% Define functions and classes
