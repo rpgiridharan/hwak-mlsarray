@@ -1,11 +1,13 @@
+#%% Import libraries
+
 import cupy as cp
 import numpy as np
 import gc
-from mlsarray import mlsarray,slicelist,init_kspace_grid,rfft2
+from modules.mlsarray import mlsarray,slicelist,init_kspace_grid,rfft2
 from gensolver import gensolver
 import h5py as h5
 
-tilde = lambda x : (x-cp.mean(x,axis=-1))
+#%% Define parameters
 
 Npx,Npy=2048,2048
 t0,t1=0,1000
@@ -23,9 +25,10 @@ nk=1e-4*cp.exp(-lkx**2/w**2-lky**2/w**2)*cp.exp(1j*2*np.pi*cp.random.rand(lkx.si
 zk=np.hstack((phik,nk))
 del lkx,lky
 gc.collect()
+
 xl,yl=np.arange(0,Lx,Lx/Npx),np.arange(0,Ly,Ly/Npy)
 x,y=cp.meshgrid(cp.array(xl),cp.array(yl),indexing='ij')
-kap0=1.0
+
 C0=5.0
 C1=0.5
 nu0=5e-2
@@ -41,6 +44,12 @@ D_x=D0+D1*(cp.exp(-(x-x[0])**2/sig**2/2)+cp.exp(-(x-x[-1])**2/sig**2/2))
 pen_x=(cp.exp(-(x-x[0])**4/sig**2/2)+cp.exp(-(x-x[-1])**4/sig**2/2))
 C_x=(C0-C1)*(1-np.tanh((x-Lx/2)/1))/2+C1
 u=mlsarray(Npx,Npy)
+
+#%% Define functions and classes
+
+
+tilde = lambda x : (x-cp.mean(x,axis=-1))
+
 def irft(uk):
 #    u.fill(0)
     u=mlsarray(Npx,Npy)
@@ -105,6 +114,8 @@ def rhs(t,y):
     dphikdt[:]+=rft((-C_x*tilde(deltan_ksqrinv))*(1-pen_x)+nu_x*om-mu1*pen_x*phi)
     dnkdt[:]+=rft((-kap_x*dyphi+C_x*tilde(phi-n))*(1-pen_x)+D_x*d2n-mu1*pen_x*n)
     return dzkdt.view(dtype=float)
+
+#%% Run the simulation
 
 if(wecontinue):
     fl=h5.File('out2.h5','r+',libver='latest')

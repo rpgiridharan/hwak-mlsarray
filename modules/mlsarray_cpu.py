@@ -1,7 +1,5 @@
-import cupy as cp
 import numpy as np
-from cupyx.scipy.fft import rfft2,irfft2,fft,ifft
-#from scipy.fft import rfft2,irfft2
+from scipy.fft import rfft2,irfft2,fft,ifft
 
 class slicelist:
     def __init__(self,Nx,Ny):
@@ -12,21 +10,21 @@ class slicelist:
         outsl=[np.s_[sum(Ns[:l]):sum(Ns[:l])+Ns[l]] for l in range(len(Ns))]
         self.insl,self.shape,self.shps,self.Ns,self.outsl=insl,shp,shps,Ns,outsl
 
-class mlsarray(cp.ndarray):
+class mlsarray(np.ndarray):
     def __new__(cls,Nx,Ny):
-        v=cp.zeros((Nx,int(Ny/2)+1),dtype=complex).view(cls)
+        v=np.zeros((Nx,int(Ny/2)+1),dtype=complex).view(cls)
         return v
     def __getitem__(self,key):
         if(isinstance(key,slicelist)):
-            return [cp.ndarray.__getitem__(self,l).ravel() for l in key.insl]
+            return [np.ndarray.__getitem__(self,l).ravel() for l in key.insl]
         else:
-            return cp.ndarray.__getitem__(self,key)
+            return np.ndarray.__getitem__(self,key)
     def __setitem__(self,key,value):
         if(isinstance(key,slicelist)):
             for l,j,shp in zip(key.insl,key.outsl,key.shps):
                 self[l]=value.ravel()[j].reshape(shp)
         else:
-            cp.ndarray.__setitem__(self,key,value)
+            np.ndarray.__setitem__(self,key,value)
     def irfft2(self):
         self.view(dtype=float)[:,:-2]=irfft2(self,norm='forward',overwrite_x=True)
     def rfft2(self):
@@ -41,8 +39,8 @@ def init_kspace_grid(sl):
     kxl=np.r_[0:int(Nx/2),-int(Nx/2):0]
     kyl=np.r_[0:int(Ny/2+1)]
     kx,ky=np.meshgrid(kxl,kyl,indexing='ij')
-    kx=cp.hstack([kx[l].ravel() for l in sl.insl])
-    ky=cp.hstack([ky[l].ravel() for l in sl.insl])
+    kx=np.hstack([kx[l].ravel() for l in sl.insl])
+    ky=np.hstack([ky[l].ravel() for l in sl.insl])
     return kx,ky
 
 def irft2(uk,Npx,Npy,sl):
@@ -53,13 +51,13 @@ def irft2(uk,Npx,Npy,sl):
 
 def rft2(u,sl):
     uk=rfft2(u,norm='forward',overwrite_x=True).view(type=mlsarray)
-    return cp.hstack(uk[sl])
+    return np.hstack(uk[sl])
 
 def irft(vk,Npx,Nx):
-    v = cp.zeros(int(Npx/2)+1, dtype='complex128')
+    v = np.zeros(int(Npx/2)+1, dtype='complex128')
     v[1:int(Nx/2)] = vk[:]
-    return cp.fft.irfft(v, norm='forward')
+    return np.fft.irfft(v, norm='forward')
 
 def rft(v,Nx):
-    return  cp.fft.rfft(v, norm='forward')[1:int(Nx/2)]
+    return  np.fft.rfft(v, norm='forward')[1:int(Nx/2)]
 
