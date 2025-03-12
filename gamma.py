@@ -18,7 +18,7 @@ def gam_p(ky,kap,C):
     return np.imag(om_p)
 
 def gammax(ky,kap,C):
-    return np.max(gam_p(ky,kap,C))
+    return np.max(gam_p(ky,kap,C)).item()
 
 def kymax(ky,kap,C):
-    return ky[np.argmax(gam_p(ky,kap,C))]
+    return ky[np.argmax(gam_p(ky,kap,C))].item()

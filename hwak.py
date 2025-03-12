@@ -84,11 +84,9 @@ def fshow(t,y):
     dyphi=irft2(1j*ky*phik)             
     n=irft2(nk)
 
-    # Gam=-cp.mean(n*dyphi)
-    # print(' Gam=', f'{Gam.get():.3g}')
-    
+    Gam=-cp.mean(n*dyphi)    
     Ktot, Kbar = cp.sum(kpsq*abs(phik)**2), cp.sum(abs(kx[slbar] * phik[slbar])**2)
-    print(f"Ktot={Ktot:.6}, Kbar/Ktot={cp.round(Kbar/Ktot*100,1)}%")
+    print(f"Gam={Gam.get():.3g}, Ktot={Ktot:.3g}, Kbar/Ktot={Kbar/Ktot*100:.1f}%")
                 
     del phik, nk, kpsq, dyphi, n
 
