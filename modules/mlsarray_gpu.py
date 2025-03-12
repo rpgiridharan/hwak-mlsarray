@@ -61,5 +61,5 @@ def irft(vk,Npx,Nx):
     return cp.fft.irfft(v, norm='forward')
 
 def rft(v,Nx):
-    return  cp.fft.rfft(v, norm='forward')[1:int(Nx/2)]
+    return cp.fft.rfft(v, norm='forward')[1:int(Nx/2)]
 

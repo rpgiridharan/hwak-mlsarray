@@ -10,7 +10,7 @@ from mpi4py import MPI
 
 comm = MPI.COMM_WORLD
 comm.Barrier()
-infl = "out_jl_kap_1_0_C_1_0.h5"
+infl = "out_jl_ROCK4_kap_1_0_C_1_0.h5"
 outfl = infl.replace(".h5", ".mp4")
 
 with h5.File(infl, "r", libver='latest', swmr=True) as fl:

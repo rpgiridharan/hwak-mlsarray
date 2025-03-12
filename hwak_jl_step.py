@@ -32,7 +32,7 @@ C=1.0
 nu=4e-3*kymax(ky0,1.0,1.0)**2/kymax(ky0,kap,C)**2
 D=4e-3*kymax(ky0,1.0,1.0)**2/kymax(ky0,kap,C)**2
 
-output = 'out_jl_kap_' + f'{kap:.1f}'.replace('.', '_') + '_C_' + f'{C:.1f}'.replace('.', '_') + '.h5'
+output = 'out_jl_ROCK4_kap_' + f'{kap:.1f}'.replace('.', '_') + '_C_' + f'{C:.1f}'.replace('.', '_') + '.h5'
 
 # All times needs to be in float for the solver
 dtstep,dtshow,dtsave=0.1,1.0,1.0
@@ -57,15 +57,12 @@ irft = partial(original_irft, Npx=Npx, Nx=Nx)
 rft = partial(original_rft, Nx=Nx)
 
 # def save_last(t,y,fl):
-    # y_array = np.array(y, dtype=float)
-    # zk = y_array.reshape(-1, 2).view(dtype=complex).flatten()
-    # save_data(fl,'last',ext_flag=False,zk=zk.get(),t=t.get())
+#     zk = np.array(y, copy=False)
+#     save_data(fl,'last',ext_flag=False,zk=zk,t=t)
 
 def save_callback(t, y):
     # Ensure y is a proper numpy array
-    y_array = np.array(y, dtype=float)
-    zk = y_array.reshape(-1, 2).view(dtype=complex).flatten()
-    
+    zk = np.array(y, copy=False)
     phik, nk = zk[:int(zk.size/2)], zk[int(zk.size/2):]
     om = irft2(-phik*(kx**2+ky**2))
     vx = irft2(-1j*ky*phik)
@@ -82,10 +79,7 @@ def save_callback(t, y):
     save_data(fl, 'fields/zonal/', ext_flag=True, vbar=vbar, ombar=ombar, nbar=nbar, t=t)
 
 def fshow(t, y):
-    # Ensure y is a proper numpy array
-    y_array = np.array(y, dtype=float)
-    zk = y_array.reshape(-1, 2).view(dtype=complex).flatten()
-    
+    zk = np.array(y, copy=False)
     phik, nk = zk[:int(zk.size/2)], zk[int(zk.size/2):]
     kpsq = kx**2 + ky**2
     dyphi = irft2(1j*ky*phik)             
@@ -96,8 +90,6 @@ def fshow(t, y):
     
     # Print without elapsed time
     print(f"Gam={Gam:.3g}, Ktot={Ktot:.3g}, Kbar/Ktot={Kbar/Ktot*100:.1f}%")
-                
-    del phik, nk, kpsq, dyphi, n
 
 def rhs(dy, y, p, t):
     """RHS function for Julia's ODE solvers (dy, y, p, t) format
@@ -109,13 +101,15 @@ def rhs(dy, y, p, t):
         t: current time
     """
 
-    # Convert arrays to numpy arrays if they're not already
-    # This handles both Python numpy arrays and Julia arrays
-    y_array = np.array(y, dtype=float)
-    
-    # Get the fields and create the time derivative - use reshape instead of view
-    zk = y_array.reshape(-1, 2).view(dtype=complex).flatten()  # Convert to complex view
+    zk = np.array(y,copy=False)
+    dzkdt = np.array(dy,copy=False)
+
+    # Split zk into phik and nk
     phik, nk = zk[:int(zk.size/2)], zk[int(zk.size/2):]
+    
+    # Split dzkdt into dphikdt and dnkdt
+    dphikdt, dnkdt = dzkdt[:int(zk.size/2)], dzkdt[int(zk.size/2):]
+
     kpsq = kx**2 + ky**2
 
     # Compute all the fields in real space that we need 
@@ -123,30 +117,14 @@ def rhs(dy, y, p, t):
     dyphi = irft2(1j*ky*phik)
     n = irft2(nk)
     
-    # Create temporary arrays for the complex derivatives
-    dzkdt = np.zeros_like(zk)
-    dphikdt, dnkdt = dzkdt[:int(zk.size/2)], dzkdt[int(zk.size/2):]
-
-    #Compute the non-linear terms
+    # Compute the non-linear terms
     dphikdt[:] = -1*(kx*ky*rft2(dxphi**2-dyphi**2) + (ky**2-kx**2)*rft2(dxphi*dyphi))/kpsq
     dnkdt[:] = 1j*kx*rft2(dyphi*n) - 1j*ky*rft2(dxphi*n)
 
-    #Add the linear terms on non-zonal modes
+    # Add the linear terms on non-zonal modes
     sigk = np.sign(ky)
     dphikdt[:] += (-C*(phik-nk)/kpsq - nu*kpsq*phik)*sigk
     dnkdt[:] += (-kap*1j*ky*phik + C*(phik-nk) - D*kpsq*nk)*sigk
-
-    # Convert complex to real and safely assign to the output array
-    dy_real = dzkdt.view(dtype=float)
-    
-    # Use direct assignment for Julia arrays (avoid np.copyto)
-    for i in range(len(dy)):
-        dy[i] = float(dy_real[i])
-
-    # dy[:] = dzkdt.view(dtype=float)
-
-    # Cleanup
-    del phik, nk, dphikdt, dnkdt, kpsq, dxphi, dyphi, n, dzkdt, zk, y_array
 
 def save_data(fl,grpname,ext_flag,**kwargs):
     if not (grpname in fl):
@@ -187,9 +165,6 @@ class Gensolver:
         if isinstance(dtsave,list) or isinstance(dtsave,tuple):
             dtsave=np.array(dtsave)
 
-        # Convert to standard numpy array - no GPU arrays
-        y0_array = np.array(y0)
-
         # Initialize Julia environment
         jl.seval("using OrdinaryDiffEq")
         jl.seval("using LinearAlgebra")
@@ -199,9 +174,9 @@ class Gensolver:
         jl.py_rhs_func = f 
         
         # Pass initial values to Julia
-        jl.py_y0 = y0_array
-        jl.py_t0 = float(t0)
-        jl.py_t1 = float(t1)
+        jl.py_y0 = y0
+        jl.py_t0 = t0
+        jl.py_t1 = t1
 
         # Define a direct wrapper in Julia that calls the Python function
         jl.seval("""
@@ -233,9 +208,9 @@ class Gensolver:
             solver_name = "ROCK4()"
 
         # Set up solver parameters
-        jl.rtol_val = float(kwargs.get('rtol', 1e-3))
-        jl.atol_val = float(kwargs.get('atol', 1e-6))
-        jl.dtmax_val = float(dtstep)
+        jl.rtol_val = kwargs.get('rtol', 1e-7)
+        jl.atol_val = kwargs.get('atol', 1e-9)
+        jl.dtmax_val = dtstep
         jl.solver_str = solver_name
         
         # Pass Python callbacks to Julia
@@ -245,8 +220,8 @@ class Gensolver:
             jl.py_fsave_list = fsave
             
         jl.py_fshow = fshow
-        jl.dtsave_val = float(dtsave[0])
-        jl.dtshow_val = float(dtshow)
+        jl.dtsave_val = dtsave[0]
+        jl.dtshow_val = dtshow
         
         # Create callback functions in Julia to call Python functions
         jl.seval("""
@@ -256,13 +231,9 @@ class Gensolver:
             u = integrator.u
             t = integrator.t
             
-            # Convert to proper Python types
-            t_py = convert(Float64, t)
-            u_py = convert(Array{Float64}, Array(u))
-            
             # Call all save functions
             for fsave in py_fsave_list
-                fsave(t_py, u_py)
+                fsave(t, u)
             end
             return false  # continue integration
         end
@@ -273,13 +244,9 @@ class Gensolver:
                 u = integrator.u
                 t = integrator.t
                 
-                # Convert to proper Python types
-                t_py = convert(Float64, t)
-                u_py = convert(Array{Float64}, Array(u))
-                
-                print("t=$(t_py).", " ")
+                print("t=$(t).", " ")
                 # Call show function
-                py_fshow(t_py, u_py)
+                py_fshow(t, u)
             end
             return false  # continue integration
         end
@@ -307,16 +274,13 @@ class Gensolver:
         solver = eval(Meta.parse(solver_str))
         
         # Use solve to create the solution and integrator with callbacks
-        sol = solve(prob, solver, 
+        integrator = init(prob, solver, 
                     abstol=atol_val, 
                     reltol=rtol_val,
                     dtmax=dtmax_val,
                     save_everystep=false,
                     dense=false,
                     callback=callback_set)
-                    
-        # Get the integrator
-        integrator = sol.integrator
         """)
         
         self.integrator = jl.integrator
@@ -344,22 +308,10 @@ class Gensolver:
         """Run the integration with the callbacks already configured in Julia"""
         t0, t1 = self.t0, self.t1
         r = self.r
-        
-        print(f"Starting integration from t={t0:.2f} to t={t1:.2f}")
-        
-        # For large integrations, use checkpoints for progress reporting only
-        if t1 - t0 > 10.0:
-            checkpoint_times = np.arange(t0 + 5.0, t1, 5.0)
-            for next_stop in checkpoint_times:
-                # Just log progress, callbacks handle actual saving/showing
-                print(f"Integration progress: {next_stop:.1f}/{t1:.1f}")
-                r.integrate(next_stop)
-        else:
-            r.integrate(t1)
+        r.integrate(t1)
         
         # Note: We don't need to manually call fsave or fshow at the end
         # because the Julia callbacks will handle this at t1
-        print(f"Integration completed at t={r.t:.2f}")
 
 class JuliaIntegrator:
     """Python wrapper for Julia integrator to mimic scipy interface"""
@@ -368,11 +320,9 @@ class JuliaIntegrator:
         self.integrator = integrator
         self.jl = jl
         
-        # Get current time as float
-        self.t = float(self.jl.seval("convert(Float64, integrator.t)"))
-        
-        # Get solution array with proper type conversion
-        self.y = np.array(self.jl.seval("convert(Array{Float64}, Array(integrator.u))"))
+        # Get current time and solution array
+        self.t = integrator.t
+        self.y = integrator.u
         
     def integrate(self, final_time):
         """Integrate the solution from current time to final_time"""
@@ -380,12 +330,8 @@ class JuliaIntegrator:
         if abs(self.t - final_time) < 1e-10:
             return
         
-        # Pass the final time to Julia
-        self.jl.final_time = float(final_time)
-        
-        # Pass dtshow to Julia for proper intervals
-        self.jl.dtshow_val = float(self.jl.dtshow)
-        
+        jl.final_time = final_time
+
         try:
             # Use the proper function to integrate to the final time directly
             self.jl.seval("""
@@ -400,36 +346,23 @@ class JuliaIntegrator:
             integer_times = ceil(start_time):1.0:floor(final_time)
             all_report_times = sort(unique(vcat(collect(report_times), collect(integer_times))))
             
-            # Create a callback function that prints at specific time points
-            function time_report_cb(u, t, integrator)
-                return false  # continue integration
-            end
+            # Set up step points - first add the final time to ensure we stop there
+            all_times = sort(unique(vcat(all_report_times, [final_time])))
             
-            # Setup callbacks - only use the discrete time callback
-            if length(all_report_times) > 0
-                cb = PresetTimeCallback(all_report_times, time_report_cb)
-                
-                # Solve to final time with reporting at specific times
-                solve!(integrator, 
-                    callback=cb, 
-                    save_everystep=false, 
-                    tstops=all_report_times)
-            else
-                # If no report times, just integrate directly
-                solve!(integrator, save_everystep=false)
+            # Step through the integration manually to the specified points
+            for next_time in all_times
+                if next_time > integrator.t
+                    step!(integrator, next_time - integrator.t, true)
+                end
             end
             """)
         except Exception as e:
             print(f"Exception during integration: {e}")
             raise
         
-        # Update time with proper type
-        self.t = float(self.jl.seval("convert(Float64, integrator.t)"))
-        
-        # Get updated solution with proper type
-        self.y = np.array(self.jl.seval("convert(Array{Float64}, Array(integrator.u))"))
-        # julia_array = self.jl.seval("convert(Array{Float64}, Array(integrator.u))")
-        # self.y = np.array(julia_array, dtype=float)
+        # Get updated time and solution
+        self.t = self.jl.integrator.t 
+        self.y = self.jl.integrator.u 
 
 #%% Run the simulation
 
@@ -448,12 +381,10 @@ else:
 
 save_data(fl,'params',ext_flag=False,C=C,kap=kap,nu=nu,D=D,Lx=Lx,Ly=Ly,Npx=Npx, Npy=Npy)
 #initialize with .view(dtype=float): a+bi becomes [a,b]
-r=Gensolver('julia.Dopri8',rhs,t0,zk.view(dtype=float),t1,fsave=save_callback,fshow=fshow,dtstep=dtstep,dtshow=dtshow,dtsave=dtsave,rtol=rtol,atol=atol)
+r=Gensolver('julia.ROCK4',rhs,t0,zk,t1,fsave=save_callback,fshow=fshow,dtstep=dtstep,dtshow=dtshow,dtsave=dtsave,rtol=rtol,atol=atol)
 
 try:
-    print(f"Starting simulation: t0={t0:.2f}, t1={t1:.2f}")
-    # No need for timeout setup
-    
+    print(f"Starting simulation: t0={t0:.2f}, t1={t1:.2f}")   
     r.run()
     print("Simulation completed successfully")
 except Exception as e:
