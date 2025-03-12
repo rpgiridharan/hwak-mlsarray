@@ -10,7 +10,11 @@ from mpi4py import MPI
 
 comm = MPI.COMM_WORLD
 comm.Barrier()
-infl = "out_jl_ROCK4_kap_1_0_C_1_0.h5"
+# infl = "out_kap_1_0_C_1_0.h5"
+# infl = "out_jl_kap_1_0_C_1_0.h5"
+infl = "out_jl_ROCK2_kap_1_0_C_1_0.h5"
+# infl = "out_jl_ROCK4_kap_1_0_C_1_0.h5"
+# infl = "out_jl_gpu_kap_1_0_C_1_0.h5"
 outfl = infl.replace(".h5", ".mp4")
 
 with h5.File(infl, "r", libver='latest', swmr=True) as fl:
@@ -33,13 +37,22 @@ Nx, Ny = om.shape[-2], om.shape[-1]
 om_max_last = max(abs(om_last.min()), abs(om_last.max()))
 n_max_last = max(abs(n_last.min()), abs(n_last.max()))
 
-w, h = 9.6, 5.4
+w, h = 10.5, 5
 fig, ax = plt.subplots(1, 2, sharey=True, figsize=(w, h))
 qd = []
 qd.append(ax[0].pcolormesh(om.T, cmap='seismic', rasterized=True, vmin=-om_max_last, vmax=om_max_last, shading='auto'))
 qd.append(ax[1].pcolormesh(n.T, cmap='seismic', rasterized=True, vmin=-n_max_last, vmax=n_max_last, shading='auto'))
-cbar1 = fig.colorbar(qd[0], ax=ax[0], orientation='vertical')
-cbar2 = fig.colorbar(qd[1], ax=ax[1], orientation='vertical')
+# cbar1 = fig.colorbar(qd[0], ax=ax[0], orientation='vertical')
+# cbar2 = fig.colorbar(qd[1], ax=ax[1], orientation='vertical')
+ax[0].set_aspect('equal')
+ax[1].set_aspect('equal')
+
+# Update the figure to ensure the aspect settings take effect before creating the colorbars
+fig.canvas.draw()
+
+# Create colorbars with appropriate sizing to match plot height
+cbar1 = fig.colorbar(qd[0], ax=ax[0], orientation='vertical', fraction=0.05, pad=0.05, shrink=0.8)
+cbar2 = fig.colorbar(qd[1], ax=ax[1], orientation='vertical', fraction=0.05, pad=0.05, shrink=0.8)
 
 if (comm.rank == 0):
     print((Nx, Ny))
@@ -50,7 +63,7 @@ ax[0].tick_params('x', labelbottom=False)
 ax[1].tick_params('y', labelleft=False)
 ax[1].tick_params('x', labelbottom=False)
 
-plt.subplots_adjust(wspace=0.01, hspace=0.2)
+plt.subplots_adjust(wspace=0.2, hspace=0.2)
 
 nt0 = 10
 nt = t.shape[0]
@@ -58,7 +71,7 @@ nt = t.shape[0]
 ax[0].axis('off')
 ax[1].axis('off')
 
-tx = fig.text(0.515, 0.925, "t=0", ha='center')
+tx = fig.text(0.515, 0.9, "t=0", ha='center')
 if (comm.rank == 0):
     lt = np.arange(nt)
     lt_loc = np.array_split(lt, comm.size)

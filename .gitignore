@@ -1,5 +1,6 @@
 /.venv
 /__pycache__
 /modules/__pycache__
+/_tmpimg_folder
 *.h5
 *.mp4

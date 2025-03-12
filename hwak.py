@@ -14,16 +14,16 @@ from functools import partial
 #%% Define parameters
 
 Npx,Npy=256,256
-Nx,Ny=2*int(np.floor(Npx/3)),2*int(np.floor(Npy/3))
-Lx,Ly=16*np.pi,16*np.pi
-dkx,dky=2*np.pi/Lx,2*np.pi/Ly
+Nx,Ny=2*int(cp.floor(Npx/3)),2*int(cp.floor(Npy/3))
+Lx,Ly=16*cp.pi,16*cp.pi
+dkx,dky=2*cp.pi/Lx,2*cp.pi/Ly
 sl=slicelist(Nx,Ny)
 lkx,lky=init_kspace_grid(sl)
 kx,ky=lkx*dkx,lky*dky
 slbar=cp.s_[int(Ny/2)-1:int(Ny/2)*int(Nx/2)-1:int(Ny/2)] #Slice to access only zonal modes
 ky0=ky[:int(Ny/2)-1] #ky at just kx=0
 # Construct real space with padded resolution because it's needed in the RHS when going to real space
-xl,yl=np.arange(0,Lx,Lx/Npx),np.arange(0,Ly,Ly/Npy)
+xl,yl=cp.arange(0,Lx,Lx/Npx),cp.arange(0,Ly,Ly/Npy)
 x,y=cp.meshgrid(cp.array(xl),cp.array(yl),indexing='ij')
 
 # Physical parameters
@@ -42,9 +42,9 @@ rtol,atol=1e-10,1e-12
 wecontinue=False
 
 w=10.0
-phik=1e-4*cp.exp(-lkx**2/2/w**2-lky**2/w**2)*cp.exp(1j*2*np.pi*cp.random.rand(lkx.size).reshape(lkx.shape))
-nk=1e-4*cp.exp(-lkx**2/w**2-lky**2/w**2)*cp.exp(1j*2*np.pi*cp.random.rand(lkx.size).reshape(lkx.shape))
-zk=np.hstack((phik,nk))
+phik=1e-4*cp.exp(-lkx**2/2/w**2-lky**2/w**2)*cp.exp(1j*2*cp.pi*cp.random.rand(lkx.size).reshape(lkx.shape))
+nk=1e-4*cp.exp(-lkx**2/w**2-lky**2/w**2)*cp.exp(1j*2*cp.pi*cp.random.rand(lkx.size).reshape(lkx.shape))
+zk=cp.hstack((phik,nk))
 
 del lkx,lky,xl,yl
 gc.collect()
@@ -131,7 +131,7 @@ def save_data(fl,grpname,ext_flag,**kwargs):
             if(not ext_flag):
                 grp[l]=m
             else:
-                if(np.isscalar(m)):
+                if(cp.isscalar(m)):
                     grp.create_dataset(l,(1,),maxshape=(None,),dtype=type(m))
                     if(not fl.swmr_mode):
                         fl.swmr_mode = True
@@ -156,9 +156,9 @@ class Gensolver:
         if(dtsave is None):
             dtsave=dtstep
         if isinstance(dtsave,float):
-            dtsave=np.array([dtsave,])
+            dtsave=cp.array([dtsave,])
         if isinstance(dtsave,list) or isinstance(dtsave,tuple):
-            dtsave=np.array(dtsave)
+            dtsave=cp.array(dtsave)
         if solver=='scipy.DOP853':
             from scipy.integrate import DOP853
             print(kwargs)
@@ -202,7 +202,7 @@ class Gensolver:
         dtfupdate=None
         t0,t1=self.t0,self.t1
         r=self.r
-        trnd=int(-np.log10(min(dtstep,dtshow,min(dtsave))/100))
+        trnd=int(-cp.log10(min(dtstep,dtshow,min(dtsave))/100))
         ct=time()
         t=t0
 
@@ -212,7 +212,7 @@ class Gensolver:
 
         tnext=round(t0+dtstep,trnd)
         tshownext=round(t0+dtshow,trnd)
-        tsavenext=np.array([round(t0+l,trnd) for l in dtsave])
+        tsavenext=cp.array([round(t0+l,trnd) for l in dtsave])
         if('dtfupdate' in self.__dict__.keys()):
             dtfupdate=self.dtfupdate
             tnextfupdate=round(t0+dtfupdate,trnd)    
@@ -245,7 +245,7 @@ if(wecontinue):
     omk,nk=rft2(cp.array(fl['fields/om'][-1,])),rft2(cp.array(fl['fields/n'][-1,]))
     phik=-omk/(kx**2+ky**2)
     t0=fl['fields/t'][-1]
-    zk=np.hstack((phik,nk))
+    zk=cp.hstack((phik,nk))
 else:
     fl=h5.File(output,'w',libver='latest')
     fl.swmr_mode = True

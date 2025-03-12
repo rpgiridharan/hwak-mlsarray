@@ -32,7 +32,7 @@ C=1.0
 nu=4e-3*kymax(ky0,1.0,1.0)**2/kymax(ky0,kap,C)**2
 D=4e-3*kymax(ky0,1.0,1.0)**2/kymax(ky0,kap,C)**2
 
-output = 'out_jl_ROCK4_kap_' + f'{kap:.1f}'.replace('.', '_') + '_C_' + f'{C:.1f}'.replace('.', '_') + '.h5'
+output = 'out_jl_ROCK2_kap_' + f'{kap:.1f}'.replace('.', '_') + '_C_' + f'{C:.1f}'.replace('.', '_') + '.h5'
 
 # All times needs to be in float for the solver
 dtstep,dtshow,dtsave=0.1,1.0,1.0
@@ -132,6 +132,8 @@ def save_data(fl,grpname,ext_flag,**kwargs):
     else:
         grp=fl[grpname]
     for l,m in kwargs.items():
+        if hasattr(m, 'get'):
+            m = m.get()
         if not l in grp:
             if(not ext_flag):
                 grp[l]=m
@@ -380,12 +382,11 @@ else:
     save_data(fl,'data',ext_flag=False,x=x,y=y,kap=kap,C=C,nu=nu,D=D)
 
 save_data(fl,'params',ext_flag=False,C=C,kap=kap,nu=nu,D=D,Lx=Lx,Ly=Ly,Npx=Npx, Npy=Npy)
-r=Gensolver('julia.ROCK4',rhs,t0,zk,t1,fsave=save_callback,fshow=fshow,dtstep=dtstep,dtshow=dtshow,dtsave=dtsave,rtol=rtol,atol=atol)
+r=Gensolver('julia.ROCK2',rhs,t0,zk,t1,fsave=save_callback,fshow=fshow,dtstep=dtstep,dtshow=dtshow,dtsave=dtsave,rtol=rtol,atol=atol)
 
 try:
     print(f"Starting simulation: t0={t0:.2f}, t1={t1:.2f}")   
     r.run()
-    print("Simulation completed successfully")
 except Exception as e:
     print(f"Error during simulation: {str(e)}")
 finally:
