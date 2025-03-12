@@ -5,7 +5,7 @@ import gc
 import os
 from modules.mlsarray_cpu import mlsarray,slicelist,init_kspace_grid
 from modules.mlsarray_cpu import irft2 as original_irft2, rft2 as original_rft2, irft as original_irft, rft as original_rft
-from gamma import gammax,kymax
+from modules.gamma import gammax,kymax
 import h5py as h5
 from time import time
 from functools import partial
@@ -35,7 +35,7 @@ C=1.0
 nu=4e-3*kymax(ky0,1.0,1.0)**2/kymax(ky0,kap,C)**2
 D=4e-3*kymax(ky0,1.0,1.0)**2/kymax(ky0,kap,C)**2
 
-output = 'out_kap_' + f'{kap:.1f}'.replace('.', '_') + '_C_' + f'{C:.1f}'.replace('.', '_') + '.h5'
+output = 'out_jl_kap_' + f'{kap:.1f}'.replace('.', '_') + '_C_' + f'{C:.1f}'.replace('.', '_') + '.h5'
 
 # All times needs to be in float for the solver
 dtstep,dtshow,dtsave=0.1,1.0,1.0

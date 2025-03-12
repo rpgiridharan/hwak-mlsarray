@@ -6,7 +6,7 @@ import gc
 import os
 from modules.mlsarray import mlsarray,slicelist,init_kspace_grid
 from modules.mlsarray import irft2 as original_irft2, rft2 as original_rft2, irft as original_irft, rft as original_rft
-from gamma import gammax,kymax
+from modules.gamma import gammax,kymax
 import h5py as h5
 from time import time
 from functools import partial
