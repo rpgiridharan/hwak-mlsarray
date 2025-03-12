@@ -62,11 +62,6 @@ rft2 = partial(original_rft2, sl=sl)
 irft = partial(original_irft, Npx=Npx, Nx=Nx)
 rft = partial(original_rft, Nx=Nx)
 
-# def save_last(t,y,fl):
-    # y_array = np.array(y, dtype=float)
-    # zk = y_array.reshape(-1, 2).view(dtype=complex).flatten()
-    # save_data(fl,'last',ext_flag=False,zk=zk.get(),t=t.get())
-
 def save_callback(t, y):
     # Ensure y is a proper numpy array
     y_array = np.array(y, dtype=float)
