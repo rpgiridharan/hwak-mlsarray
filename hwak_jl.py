@@ -73,9 +73,9 @@ def save_callback(t,y):
     vbar=np.mean(vy,1)
     ombar=np.mean(om,1)
     nbar=np.mean(n,1)
-    save_data(fl,'fields',ext_flag=True,om=om.get(),n=n.get(),t=t.get())
-    save_data(fl,'fluxes',ext_flag=True,Gam=Gam.get(),Pi=Pi.get(),R=R.get(),t=t.get())
-    save_data(fl,'fields/zonal/',ext_flag=True,vbar=vbar.get(),ombar=ombar.get(),nbar=nbar.get(),t=t.get())
+    save_data(fl,'fields',ext_flag=True,om=om,n=n,t=t)
+    save_data(fl,'fluxes',ext_flag=True,Gam=Gam,Pi=Pi,R=R,t=t)
+    save_data(fl,'fields/zonal/',ext_flag=True,vbar=vbar,ombar=ombar,nbar=nbar,t=t)
 
 def fshow(t,y):
     zk=y.view(dtype=complex)
@@ -92,33 +92,47 @@ def fshow(t,y):
                 
     del phik, nk, kpsq, dyphi, n
 
-def rhs(t,y):
-    #Get the fields and create the time derivative
-    zk=y.view(dtype=complex)
-    dzkdt=np.zeros_like(zk)
-    phik,nk=zk[:int(zk.size/2)],zk[int(zk.size/2):]
-    dphikdt,dnkdt=dzkdt[:int(zk.size/2)],dzkdt[int(zk.size/2):]
-    kpsq=kx**2+ky**2
+def rhs(dy, y, p, t):
+    """RHS function for Julia's ODE solvers (dy, y, p, t) format
+    
+    Arguments:
+        dy: output array where derivatives should be stored
+        y: current state vector (will be viewed as complex)
+        p: parameters (unused in this case)
+        t: current time
+    """
+    # Convert arrays to numpy arrays if they're not already
+    # This handles both Python numpy arrays and Julia arrays
+    y_array = np.array(y, dtype=float)
+    
+    # Get the fields and create the time derivative - use reshape instead of view
+    zk = y_array.reshape(-1, 2).view(dtype=complex).flatten()  # Convert to complex view
+    phik, nk = zk[:int(zk.size/2)], zk[int(zk.size/2):]
+    kpsq = kx**2 + ky**2
 
     # Compute all the fields in real space that we need 
-    dxphi=irft2(1j*kx*phik)
-    dyphi=irft2(1j*ky*phik)
-    n=irft2(nk)
+    dxphi = irft2(1j*kx*phik)
+    dyphi = irft2(1j*ky*phik)
+    n = irft2(nk)
+    
+    # Create temporary arrays for the complex derivatives
+    dzkdt = np.zeros_like(zk)
+    dphikdt, dnkdt = dzkdt[:int(zk.size/2)], dzkdt[int(zk.size/2):]
 
     #Compute the non-linear terms
-    dphikdt[:]=-1*(kx*ky*rft2(dxphi**2-dyphi**2) + (ky**2-kx**2)*rft2(dxphi*dyphi))/kpsq
-    dnkdt[:]=1j*kx*rft2(dyphi*n)-1j*ky*rft2(dxphi*n)
+    dphikdt[:] = -1*(kx*ky*rft2(dxphi**2-dyphi**2) + (ky**2-kx**2)*rft2(dxphi*dyphi))/kpsq
+    dnkdt[:] = 1j*kx*rft2(dyphi*n) - 1j*ky*rft2(dxphi*n)
 
     #Add the linear terms on non-zonal modes
     sigk = np.sign(ky)
-    NZ = ky>0
-    # dphikdt[:]+=(-C*(phik-nk)/kpsq - nu*kpsq*phik)*sigk
-    # dnkdt[:]+=(-kap*1j*ky*phik + C*(phik-nk) - D*kpsq*nk)*sigk
-    dphikdt[:]+=(-C*(phik-nk)/kpsq - nu*kpsq*phik) * NZ
-    dnkdt[:]+=(-kap*1j*ky*phik + C*(phik-nk) - D*kpsq*nk) * NZ
+    dphikdt[:] += (-C*(phik-nk)/kpsq - nu*kpsq*phik)*sigk
+    dnkdt[:] += (-kap*1j*ky*phik + C*(phik-nk) - D*kpsq*nk)*sigk
 
-    del phik, nk, dphikdt, dnkdt, kpsq, dxphi, dyphi, n
-    return dzkdt.view(dtype=float)
+    # Copy to output array (converting complex to real for the solver)
+    np.copyto(dy, dzkdt.view(dtype=float))
+    
+    # Cleanup
+    del phik, nk, dphikdt, dnkdt, kpsq, dxphi, dyphi, n, dzkdt, zk, y_array
 
 def save_data(fl,grpname,ext_flag,**kwargs):
     if not (grpname in fl):
@@ -126,8 +140,6 @@ def save_data(fl,grpname,ext_flag,**kwargs):
     else:
         grp=fl[grpname]
     for l,m in kwargs.items():
-        if hasattr(m, 'get'):
-            m = m.get()
         if not l in grp:
             if(not ext_flag):
                 grp[l]=m
@@ -161,67 +173,37 @@ class Gensolver:
         if isinstance(dtsave,list) or isinstance(dtsave,tuple):
             dtsave=np.array(dtsave)
 
-        # Convert numpy/cupy arrays to a standard numpy array
-        if hasattr(y0, 'get'):
-            y0_array = y0.get()
-        else:
-            y0_array = np.array(y0)
-
-        # Store if this is a GPU array
-        self.is_gpu_array = hasattr(y0, 'get')
+        # Convert to standard numpy array - no GPU arrays
+        y0_array = np.array(y0)
 
         # Initialize Julia environment
         jl.seval("using OrdinaryDiffEq")
         jl.seval("using LinearAlgebra")
 
-        # Store the Python RHS function
-        self.py_rhs_func = f
+        # Pass the python RHS function to Julia
+        jl.py_rhs_func = f 
         
         # Pass initial values to Julia
         jl.py_y0 = y0_array
         jl.py_t0 = float(t0)
         jl.py_t1 = float(t1)
 
-        # Create a bridge function for Julia to call Python that ensures proper type conversion
-        def bridge_function(t, u):
-            # Convert to numpy array to avoid serialization issues
-            u_np = np.array(u)
-            
-            # If original array was GPU-based, move computation to GPU
-            if self.is_gpu_array:
-                u_gpu = np.array(u_np)
-                # Call the RHS function
-                result = f(float(t), u_gpu)
-                # Get result back from GPU and ensure it's a numpy array
-                if hasattr(result, 'get'):
-                    return result.get().astype(np.float64)
-                return np.array(result, dtype=np.float64)
-            else:
-                # CPU path - ensure result is proper float64 array
-                result = f(float(t), u_np)
-                return np.array(result, dtype=np.float64)
-
-        # Make the bridge function available to Julia
-        jl.bridge_func = bridge_function
-
-        # Define the wrapper in Julia - explicitly cast types
+        # Define a direct wrapper in Julia that calls the Python function
         jl.seval("""
-        function safe_rhs_wrapper(du, u, p, t)
-            # Call the Python function via the bridge
-            result = bridge_func(convert(Float64, t), Array(u))
-            
-            # Ensure result is properly handled - assuming it's now a NumPy array
-            # Copy directly to the output array
-            for i in 1:length(du)
-                du[i] = result[i]
-            end
-            
+        function direct_rhs_wrapper(du, u, p, t)
+            # Call the Python function directly
+            # Note: Julia will handle passing the values and converting them back
+            py_rhs_func(du, u, nothing, t)
             return nothing
         end
         """)
 
-        # Set up the Julia ODE problem and solver - AVOID KEYWORD ARGS
-        jl.seval("prob = ODEProblem(safe_rhs_wrapper, convert(Vector{Float64}, py_y0), (py_t0, py_t1))")
+        # Set up the Julia ODE problem and solver
+        jl.seval("""
+        # Create the ODE problem using the direct wrapper
+        prob = ODEProblem(direct_rhs_wrapper, py_y0, (py_t0, py_t1))
+        """)
+        
         self.problem = jl.prob  # Store the Julia problem
 
         # Choose appropriate solver
@@ -235,13 +217,13 @@ class Gensolver:
         elif solver == 'julia.ROCK4':
             solver_name = "ROCK4()"
 
-        # Set up solver parameters - use the correct approach compatible with solve()
+        # Set up solver parameters
         jl.rtol_val = float(kwargs.get('rtol', 1e-3))
         jl.atol_val = float(kwargs.get('atol', 1e-6))
         jl.dtmax_val = float(dtstep)
         jl.solver_str = solver_name
         
-        # Create the integrator - use solve() first, then init() if needed
+        # Create the integrator
         jl.seval("""
         # Create the solver with properly named kwargs
         solver = eval(Meta.parse(solver_str))
@@ -261,7 +243,7 @@ class Gensolver:
         self.integrator = jl.integrator
         
         # Attach a Python-friendly interface
-        self.r = JuliaIntegrator(self.integrator, jl, is_gpu=self.is_gpu_array)
+        self.r = JuliaIntegrator(self.integrator, jl)
 
         # Store other parameters
         self.dtstep,self.dtshow,self.dtsave=dtstep,dtshow,dtsave
@@ -320,42 +302,28 @@ class Gensolver:
                     self.fsave[l](r.t,r.y)
 
 class JuliaIntegrator:
-    """Python wrapper for Julia integrator to mimic scipy/cupy interface"""
+    """Python wrapper for Julia integrator to mimic scipy interface"""
     
-    def __init__(self, integrator, jl, is_gpu=False):
+    def __init__(self, integrator, jl):
         self.integrator = integrator
         self.jl = jl
-        self.is_gpu = is_gpu
         
         # Get current time as float
         self.t = float(self.jl.seval("convert(Float64, integrator.t)"))
         
         # Get solution array with proper type conversion
-        y_numpy = np.array(self.jl.seval("convert(Array{Float64}, Array(integrator.u))"))
-        
-        # Convert to GPU array if needed
-        if self.is_gpu:
-            self.y = np.array(y_numpy)
-        else:
-            self.y = y_numpy
+        self.y = np.array(self.jl.seval("convert(Array{Float64}, Array(integrator.u))"))
         
     def integrate(self, tnext):
         """Step the integrator to time tnext"""
-        # Pass the next time value with explicit type
-        self.jl.tnext_val = float(tnext)
-        self.jl.seval("step!(integrator, convert(Float64, tnext_val))")
+        # Ensure tnext is a proper Julia float
+        self.jl.seval(f"step!(integrator, {float(tnext)})")
         
         # Update time with proper type
         self.t = float(self.jl.seval("convert(Float64, integrator.t)"))
         
         # Get updated solution with proper type
-        y_numpy = np.array(self.jl.seval("convert(Array{Float64}, Array(integrator.u))"))
-        
-        # Convert to GPU if needed
-        if self.is_gpu:
-            self.y = np.array(y_numpy)
-        else:
-            self.y = y_numpy
+        self.y = np.array(self.jl.seval("convert(Array{Float64}, Array(integrator.u))"))
         
     def step(self):
         """Take a single step"""
@@ -365,13 +333,7 @@ class JuliaIntegrator:
         self.t = float(self.jl.seval("convert(Float64, integrator.t)"))
         
         # Get updated solution with proper type
-        y_numpy = np.array(self.jl.seval("convert(Array{Float64}, Array(integrator.u))"))
-        
-        # Convert to GPU if needed
-        if self.is_gpu:
-            self.y = np.array(y_numpy)
-        else:
-            self.y = y_numpy
+        self.y = np.array(self.jl.seval("convert(Array{Float64}, Array(integrator.u))"))
 
 #%% Run the simulation
 
@@ -386,9 +348,10 @@ else:
     fl=h5.File(output,'w',libver='latest')
     fl.swmr_mode = True
     t=float(t0)
-    save_data(fl,'data',ext_flag=False,x=x.get(),y=y.get(),kap=kap,C=C,nu=nu,D=D)
+    save_data(fl,'data',ext_flag=False,x=x,y=y,kap=kap,C=C,nu=nu,D=D)
 
 save_data(fl,'params',ext_flag=False,C=C,kap=kap,nu=nu,D=D,Lx=Lx,Ly=Ly,Npx=Npx, Npy=Npy)
+#initialize with .view(dtype=float): a+bi becomes [a,b]
 r=Gensolver('julia.Dopri8',rhs,t0,zk.view(dtype=float),t1,fsave=save_callback,fshow=fshow,dtstep=dtstep,dtshow=dtshow,dtsave=dtsave,rtol=rtol,atol=atol)
 r.run()
 fl.close()
