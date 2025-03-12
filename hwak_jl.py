@@ -10,9 +10,6 @@ import h5py as h5
 from time import time
 from functools import partial
 from juliacall import Main as jl
-import signal
-import sys
-import logging
 
 #%% Define parameters
 
@@ -53,9 +50,6 @@ del lkx,lky,xl,yl
 gc.collect()
 
 #%% Define functions and classes
-
-def timeout_handler(signum, frame):
-    raise TimeoutError("Simulation took too long")
 
 irft2 = partial(original_irft2, Npx=Npx, Npy=Npy, sl=sl)
 rft2 = partial(original_rft2, sl=sl)
@@ -99,6 +93,8 @@ def fshow(t, y):
 
     Gam = -np.mean(n*dyphi)
     Ktot, Kbar = np.sum(kpsq*abs(phik)**2), np.sum(abs(kx[slbar] * phik[slbar])**2)
+    
+    # Print without elapsed time
     print(f"Gam={Gam:.3g}, Ktot={Ktot:.3g}, Kbar/Ktot={Kbar/Ktot*100:.1f}%")
                 
     del phik, nk, kpsq, dyphi, n
@@ -424,7 +420,7 @@ class JuliaIntegrator:
             end
             """)
         except Exception as e:
-            logging.error(f"Exception during integration: {e}")
+            print(f"Exception during integration: {e}")
             raise
         
         # Update time with proper type
@@ -456,17 +452,13 @@ r=Gensolver('julia.Dopri8',rhs,t0,zk.view(dtype=float),t1,fsave=save_callback,fs
 
 try:
     print(f"Starting simulation: t0={t0:.2f}, t1={t1:.2f}")
-    # Set a timeout based on expected simulation time
-    signal.signal(signal.SIGALRM, timeout_handler)
-    signal.alarm(3600)  # 1 hour timeout for production runs
+    # No need for timeout setup
     
     r.run()
     print("Simulation completed successfully")
-except TimeoutError as e:
-    logging.error(f"Timeout: {e}")
 except Exception as e:
-    logging.error(f"Error during simulation: {str(e)}")
+    print(f"Error during simulation: {str(e)}")
 finally:
-    signal.alarm(0)  # Cancel the alarm
+    # No need to cancel alarm
     fl.close()
     print("Output file closed")
