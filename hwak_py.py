@@ -4,8 +4,8 @@ import cupy as cp
 import numpy as np
 import gc
 import os
-from modules.mlsarray import mlsarray,slicelist,init_kspace_grid
-from modules.mlsarray import irft2 as original_irft2, rft2 as original_rft2, irft as original_irft, rft as original_rft
+from modules.mlsarray_gpu import mlsarray,slicelist,init_kspace_grid
+from modules.mlsarray_gpu import irft2 as original_irft2, rft2 as original_rft2, irft as original_irft, rft as original_rft
 from modules.gamma import gammax,kymax
 import h5py as h5
 from time import time
@@ -14,25 +14,25 @@ from functools import partial
 #%% Define parameters
 
 Npx,Npy=256,256
-Nx,Ny=2*int(cp.floor(Npx/3)),2*int(cp.floor(Npy/3))
-Lx,Ly=16*cp.pi,16*cp.pi
-dkx,dky=2*cp.pi/Lx,2*cp.pi/Ly
+Nx,Ny=2*int(np.floor(Npx/3)),2*int(np.floor(Npy/3))
+Lx,Ly=16*np.pi,16*np.pi
+dkx,dky=2*np.pi/Lx,2*np.pi/Ly
 sl=slicelist(Nx,Ny)
 lkx,lky=init_kspace_grid(sl)
 kx,ky=lkx*dkx,lky*dky
-slbar=cp.s_[int(Ny/2)-1:int(Ny/2)*int(Nx/2)-1:int(Ny/2)] #Slice to access only zonal modes
+slbar=np.s_[int(Ny/2)-1:int(Ny/2)*int(Nx/2)-1:int(Ny/2)] #Slice to access only zonal modes
 ky0=ky[:int(Ny/2)-1] #ky at just kx=0
 # Construct real space with padded resolution because it's needed in the RHS when going to real space
-xl,yl=cp.arange(0,Lx,Lx/Npx),cp.arange(0,Ly,Ly/Npy)
-x,y=cp.meshgrid(cp.array(xl),cp.array(yl),indexing='ij')
+xl,yl=np.arange(0,Lx,Lx/Npx),np.arange(0,Ly,Ly/Npy)
+x,y=np.meshgrid(np.array(xl),np.array(yl),indexing='ij')
 
 # Physical parameters
 kap=1.0
 C=1.0
-nu=4e-3*kymax(ky0,1.0,1.0)**2/kymax(ky0,kap,C)**2
-D=4e-3*kymax(ky0,1.0,1.0)**2/kymax(ky0,kap,C)**2
+nu=5e-3*kymax(ky0,1.0,1.0)**2/kymax(ky0,kap,C)**2
+D=5e-3*kymax(ky0,1.0,1.0)**2/kymax(ky0,kap,C)**2
 
-output = 'out_kap_' + f'{kap:.1f}'.replace('.', '_') + '_C_' + f'{C:.1f}'.replace('.', '_') + '.h5'
+output = 'out_py_kap_' + f'{kap:.1f}'.replace('.', '_') + '_C_' + f'{C:.1f}'.replace('.', '_') + '.h5'
 
 # All times needs to be in float for the solver
 dtstep,dtshow,dtsave=0.1,1.0,1.0
@@ -96,7 +96,9 @@ def rhs(t,y):
     dzkdt=cp.zeros_like(zk)
     phik,nk=zk[:int(zk.size/2)],zk[int(zk.size/2):]
     dphikdt,dnkdt=dzkdt[:int(zk.size/2)],dzkdt[int(zk.size/2):]
+
     kpsq=kx**2+ky**2
+    sigk = cp.sign(ky) # zero for ky=0, 1 for ky>0
 
     # Compute all the fields in real space that we need 
     dxphi=irft2(1j*kx*phik)
@@ -107,15 +109,14 @@ def rhs(t,y):
     dphikdt[:]=-1*(kx*ky*rft2(dxphi**2-dyphi**2) + (ky**2-kx**2)*rft2(dxphi*dyphi))/kpsq
     dnkdt[:]=1j*kx*rft2(dyphi*n)-1j*ky*rft2(dxphi*n)
 
-    #Add the linear terms on non-zonal modes
-    sigk = cp.sign(ky)
-    NZ = ky>0
-    # dphikdt[:]+=(-C*(phik-nk)/kpsq - nu*kpsq*phik)*sigk
-    # dnkdt[:]+=(-kap*1j*ky*phik + C*(phik-nk) - D*kpsq*nk)*sigk
-    dphikdt[:]+=(-C*(phik-nk)/kpsq - nu*kpsq*phik) * NZ
-    dnkdt[:]+=(-kap*1j*ky*phik + C*(phik-nk) - D*kpsq*nk) * NZ
+    # Add the linear terms on non-zonal modes
+    dphikdt[:] += (-C*(phik-nk)/kpsq)*sigk
+    dnkdt[:] += (-kap*1j*ky*phik + C*(phik-nk))*sigk
 
-    # dzkdt[:]=cp.hstack((dphikdt,dnkdt))
+    # Add the viscosity terms on non-zonal modes
+    dphikdt[:] += -nu*kpsq*phik*sigk
+    dnkdt[:] += -D*kpsq*nk*sigk
+
     del phik, nk, dphikdt, dnkdt, kpsq, dxphi, dyphi, n
     return dzkdt.view(dtype=float)
 
@@ -131,7 +132,7 @@ def save_data(fl,grpname,ext_flag,**kwargs):
             if(not ext_flag):
                 grp[l]=m
             else:
-                if(cp.isscalar(m)):
+                if(np.isscalar(m)):
                     grp.create_dataset(l,(1,),maxshape=(None,),dtype=type(m))
                     if(not fl.swmr_mode):
                         fl.swmr_mode = True
@@ -156,9 +157,9 @@ class Gensolver:
         if(dtsave is None):
             dtsave=dtstep
         if isinstance(dtsave,float):
-            dtsave=cp.array([dtsave,])
+            dtsave=np.array([dtsave,])
         if isinstance(dtsave,list) or isinstance(dtsave,tuple):
-            dtsave=cp.array(dtsave)
+            dtsave=np.array(dtsave)
         if solver=='scipy.DOP853':
             from scipy.integrate import DOP853
             print(kwargs)
@@ -202,7 +203,7 @@ class Gensolver:
         dtfupdate=None
         t0,t1=self.t0,self.t1
         r=self.r
-        trnd=int(-cp.log10(min(dtstep,dtshow,min(dtsave))/100))
+        trnd=int(-np.log10(min(dtstep,dtshow,min(dtsave))/100))
         ct=time()
         t=t0
 
@@ -212,7 +213,7 @@ class Gensolver:
 
         tnext=round(t0+dtstep,trnd)
         tshownext=round(t0+dtshow,trnd)
-        tsavenext=cp.array([round(t0+l,trnd) for l in dtsave])
+        tsavenext=np.array([round(t0+l,trnd) for l in dtsave])
         if('dtfupdate' in self.__dict__.keys()):
             dtfupdate=self.dtfupdate
             tnextfupdate=round(t0+dtfupdate,trnd)    
@@ -250,7 +251,7 @@ else:
     fl=h5.File(output,'w',libver='latest')
     fl.swmr_mode = True
     t=float(t0)
-    save_data(fl,'data',ext_flag=False,x=x.get(),y=y.get(),kap=kap,C=C,nu=nu,D=D)
+    save_data(fl,'data',ext_flag=False,x=x,y=y,kap=kap,C=C,nu=nu,D=D)
 
 save_data(fl,'params',ext_flag=False,C=C,kap=kap,nu=nu,D=D,Lx=Lx,Ly=Ly,Npx=Npx, Npy=Npy)
 r=Gensolver('cupy_ivp.DOP853',rhs,t0,zk.view(dtype=float),t1,fsave=save_callback,fshow=fshow,dtstep=dtstep,dtshow=dtshow,dtsave=dtsave,rtol=rtol,atol=atol)

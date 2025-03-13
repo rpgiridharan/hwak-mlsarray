@@ -29,10 +29,11 @@ x,y=np.meshgrid(np.array(xl),np.array(yl),indexing='ij')
 # Physical parameters
 kap=1.0
 C=1.0
-nu=4e-3*kymax(ky0,1.0,1.0)**2/kymax(ky0,kap,C)**2
-D=4e-3*kymax(ky0,1.0,1.0)**2/kymax(ky0,kap,C)**2
+nu=5e-3*kymax(ky0,1.0,1.0)**2/kymax(ky0,kap,C)**2
+D=5e-3*kymax(ky0,1.0,1.0)**2/kymax(ky0,kap,C)**2
 
-output = 'out_jl_ROCK2_kap_' + f'{kap:.1f}'.replace('.', '_') + '_C_' + f'{C:.1f}'.replace('.', '_') + '.h5'
+solver='jl.DP8'
+output = 'out_'+solver.replace('.','_')+'_kap_' + f'{kap:.1f}'.replace('.', '_') + '_C_' + f'{C:.1f}'.replace('.', '_') + '.h5'
 
 # All times needs to be in float for the solver
 dtstep,dtshow,dtsave=0.1,1.0,1.0
@@ -111,6 +112,7 @@ def rhs(dy, y, p, t):
     dphikdt, dnkdt = dzkdt[:int(zk.size/2)], dzkdt[int(zk.size/2):]
 
     kpsq = kx**2 + ky**2
+    sigk = np.sign(ky) # zero for ky=0, 1 for ky>0
 
     # Compute all the fields in real space that we need 
     dxphi = irft2(1j*kx*phik)
@@ -122,9 +124,12 @@ def rhs(dy, y, p, t):
     dnkdt[:] = 1j*kx*rft2(dyphi*n) - 1j*ky*rft2(dxphi*n)
 
     # Add the linear terms on non-zonal modes
-    sigk = np.sign(ky)
-    dphikdt[:] += (-C*(phik-nk)/kpsq - nu*kpsq*phik)*sigk
-    dnkdt[:] += (-kap*1j*ky*phik + C*(phik-nk) - D*kpsq*nk)*sigk
+    dphikdt[:] += (-C*(phik-nk)/kpsq)*sigk
+    dnkdt[:] += (-kap*1j*ky*phik + C*(phik-nk))*sigk
+
+    # Add the viscosity terms on non-zonal modes
+    dphikdt[:] += -nu*kpsq*phik*sigk
+    dnkdt[:] += -D*kpsq*nk*sigk
 
 def save_data(fl,grpname,ext_flag,**kwargs):
     if not (grpname in fl):
@@ -200,14 +205,14 @@ class Gensolver:
 
         # Choose appropriate solver
         solver_name = "Tsit5()"  # Default
-        if solver == 'julia.Tsit5':
-            solver_name = "Tsit5()"
-        elif solver == 'julia.Dopri8':
-            solver_name = "DP8()"
-        elif solver == 'julia.ROCK2':
-            solver_name = "ROCK2()"
-        elif solver == 'julia.ROCK4':
-            solver_name = "ROCK4()"
+        if solver == 'jl.Tsit5':
+            solver_name = "Tsit5()"  # 5th order explicit RK method - efficient for non-stiff problems
+        elif solver == 'jl.DP8':
+            solver_name = "DP8()"    # 8th order explicit RK - higher accuracy, good for smooth problems
+        elif solver == 'jl.ROCK2':
+            solver_name = "ROCK2()"  # 2nd order stabilized explicit - for mildly stiff problems
+        elif solver == 'jl.ROCK4':
+            solver_name = "ROCK4()"  # 4th order stabilized explicit - better accuracy but slower than ROCK2
 
         # Set up solver parameters
         jl.rtol_val = kwargs.get('rtol', 1e-7)
@@ -382,10 +387,9 @@ else:
     save_data(fl,'data',ext_flag=False,x=x,y=y,kap=kap,C=C,nu=nu,D=D)
 
 save_data(fl,'params',ext_flag=False,C=C,kap=kap,nu=nu,D=D,Lx=Lx,Ly=Ly,Npx=Npx, Npy=Npy)
-r=Gensolver('julia.ROCK2',rhs,t0,zk,t1,fsave=save_callback,fshow=fshow,dtstep=dtstep,dtshow=dtshow,dtsave=dtsave,rtol=rtol,atol=atol)
+r=Gensolver(solver,rhs,t0,zk,t1,fsave=save_callback,fshow=fshow,dtstep=dtstep,dtshow=dtshow,dtsave=dtsave,rtol=rtol,atol=atol)
 
 try:
-    print(f"Starting simulation: t0={t0:.2f}, t1={t1:.2f}")   
     r.run()
 except Exception as e:
     print(f"Error during simulation: {str(e)}")
