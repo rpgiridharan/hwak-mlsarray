@@ -6,6 +6,6 @@ hwak_hyp_jl_DP8: 240.58 secs
 hwak_hyp_jl_Tsit5: 448 secs
 hwak_hyp_jl_ROCK4: 2588 secs
 hwak_hyp_jl_TRBDF2: 576 secs
-hwak_hyp_jl_Rosenbrock23: 1020 secs
 hwak_hyp_jl_Kvaerno3: 913 secs
+hwak_hyp_jl_Rosenbrock23: 1020 secs
 

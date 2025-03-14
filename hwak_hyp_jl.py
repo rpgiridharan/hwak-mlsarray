@@ -32,7 +32,7 @@ C=1.0
 nu=1e-3*kymax(ky0,1.0,1.0)**4/kymax(ky0,kap,C)**4
 D=1e-3*kymax(ky0,1.0,1.0)**4/kymax(ky0,kap,C)**4
 
-solver='jl.Kvaerno3'
+solver='jl.TRBDF2'
 output = 'out_hyp_'+solver.replace('.','_')+'_kap_' + f'{kap:.1f}'.replace('.', '_') + '_C_' + f'{C:.1f}'.replace('.', '_') + '.h5'
 
 # All times needs to be in float for the solver
@@ -266,6 +266,8 @@ class Gensolver:
         # Add Rosenbrock methods (Jacobian needed)
         elif solver == 'jl.Rosenbrock23':
             solver_name = "Rosenbrock23(autodiff=false)"  # 2nd/3rd order Rosenbrock method - good for stiff problems
+        elif solver == 'jl.Rodas3':
+            solver_name = "Rodas3(autodiff=false)"  # 3rd order Rosenbrock method - balanced accuracy and performance    
         elif solver == 'jl.Rodas4':
             solver_name = "Rodas4(autodiff=false)"  # 4th order Rosenbrock method - higher accuracy for stiff problems
         elif solver == 'jl.Rodas5':
