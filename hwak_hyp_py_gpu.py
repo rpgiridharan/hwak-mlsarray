@@ -29,10 +29,10 @@ x,y=np.meshgrid(np.array(xl),np.array(yl),indexing='ij')
 # Physical parameters
 kap=1.0
 C=1.0
-nu=5e-3*kymax(ky0,1.0,1.0)**2/kymax(ky0,kap,C)**2
-D=5e-3*kymax(ky0,1.0,1.0)**2/kymax(ky0,kap,C)**2
+nu=1e-3*kymax(ky0,1.0,1.0)**2/kymax(ky0,kap,C)**2
+D=1e-3*kymax(ky0,1.0,1.0)**2/kymax(ky0,kap,C)**2
 
-output = 'out_py_kap_' + f'{kap:.1f}'.replace('.', '_') + '_C_' + f'{C:.1f}'.replace('.', '_') + '.h5'
+output = 'out_hyp_py_DOP853_gpu_kap_' + f'{kap:.1f}'.replace('.', '_') + '_C_' + f'{C:.1f}'.replace('.', '_') + '.h5'
 
 # All times needs to be in float for the solver
 dtstep,dtshow,dtsave=0.1,1.0,1.0
@@ -114,8 +114,8 @@ def rhs(t,y):
     dnkdt[:] += (-kap*1j*ky*phik + C*(phik-nk))*sigk
 
     # Add the viscosity terms on non-zonal modes
-    dphikdt[:] += -nu*kpsq*phik*sigk
-    dnkdt[:] += -D*kpsq*nk*sigk
+    dphikdt[:] += -nu*kpsq**2*phik*sigk
+    dnkdt[:] += -D*kpsq**2*nk*sigk
 
     del phik, nk, dphikdt, dnkdt, kpsq, dxphi, dyphi, n
     return dzkdt.view(dtype=float)

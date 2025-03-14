@@ -13,7 +13,7 @@ from juliacall import Main as jl
 
 #%% Define parameters
 
-Npx,Npy=128,128
+Npx,Npy=256,256
 Nx,Ny=2*int(np.floor(Npx/3)),2*int(np.floor(Npy/3))
 Lx,Ly=16*np.pi,16*np.pi
 dkx,dky=2*np.pi/Lx,2*np.pi/Ly
@@ -29,10 +29,10 @@ x,y=np.meshgrid(np.array(xl),np.array(yl),indexing='ij')
 # Physical parameters
 kap=1.0
 C=1.0
-nu=5e-3*kymax(ky0,1.0,1.0)**2/kymax(ky0,kap,C)**2
-D=5e-3*kymax(ky0,1.0,1.0)**2/kymax(ky0,kap,C)**2
+nu=1e-3*kymax(ky0,1.0,1.0)**4/kymax(ky0,kap,C)**4
+D=1e-3*kymax(ky0,1.0,1.0)**4/kymax(ky0,kap,C)**4
 
-solver='jl.KenCarp47'
+solver='jl.KenCarp3'
 output = 'out_hyp_'+solver.replace('.','_')+'_kap_' + f'{kap:.1f}'.replace('.', '_') + '_C_' + f'{C:.1f}'.replace('.', '_') + '.h5'
 
 # All times needs to be in float for the solver
@@ -192,6 +192,11 @@ class Gensolver:
         jl.py_t0 = t0
         jl.py_t1 = t1
 
+        jl.seval("""
+        # Add a timer to track computation time
+        ct = time()
+        """)
+
         # Define wrappers in Julia that call the Python functions
         jl.seval("""
         function nonstiff_wrapper(du, u, p, t)
@@ -234,6 +239,7 @@ class Gensolver:
         jl.atol_val = kwargs.get('atol', 1e-9)
         jl.dtmax_val = dtstep
         jl.solver_str = solver_name
+        jl.kwargs_py = kwargs
         
         # Pass Python callbacks to Julia
         if callable(fsave):
@@ -266,7 +272,8 @@ class Gensolver:
                 u = integrator.u
                 t = integrator.t
                 
-                print("t=$(t).", " ")
+                elapsed = time() - ct
+                print("t=$(round(t, digits=3)), $(round(elapsed, digits=3)) secs elapsed.", " ")
                 # Call show function
                 py_fshow(t, u)
             end
@@ -279,11 +286,11 @@ class Gensolver:
         
         # Generate save times (ensure we include t0 and t1)
         save_times = vcat([start_time], collect(ceil(start_time/dtsave_val)*dtsave_val:dtsave_val:end_time), [end_time])
-        save_times = sort(unique(save_times))
+        save_times = sort(unique(round.(save_times, digits=3)))
         
         # Generate show times (ensure we include t0 and t1)
         show_times = vcat([start_time], collect(ceil(start_time/dtshow_val)*dtshow_val:dtshow_val:end_time), [end_time])
-        show_times = sort(unique(show_times))
+        show_times = sort(unique(round.(show_times, digits=3))) 
         
         # Create the callbacks
         save_callback = PresetTimeCallback(save_times, save_cb)
@@ -295,14 +302,18 @@ class Gensolver:
         # Create the solver with properly named kwargs
         solver = eval(Meta.parse(solver_str))
         
+        kwargs = Dict{Symbol, Any}()
+        for (k, v) in pairs(kwargs_py)
+            kwargs[Symbol(k)] = v
+        end
+
         # Use solve to create the solution and integrator with callbacks
         integrator = init(prob, solver, 
-                    abstol=atol_val, 
-                    reltol=rtol_val,
                     dtmax=dtmax_val,
                     save_everystep=false,
                     dense=false,
-                    callback=callback_set)
+                    callback=callback_set;
+                    kwargs...)
         """)
         
         self.integrator = jl.integrator
@@ -353,7 +364,7 @@ class JuliaIntegrator:
             return
         
         jl.final_time = final_time
-        print(f"Starting integration from {self.t} to {final_time}")
+
         try:
             # Use the proper function to integrate to the final time directly
             self.jl.seval("""
@@ -370,6 +381,7 @@ class JuliaIntegrator:
             
             # Set up step points - first add the final time to ensure we stop there
             all_times = sort(unique(vcat(all_report_times, [final_time])))
+            all_times = round.(all_times, digits=3)  
             
             # Step through the integration manually to the specified points
             for next_time in all_times
@@ -381,8 +393,6 @@ class JuliaIntegrator:
         except Exception as e:
             print(f"Exception during integration: {e}")
             raise
-
-        print(f"Integration step completed to {self.jl.integrator.t}")
         
         # Get updated time and solution
         self.t = self.jl.integrator.t 
@@ -404,7 +414,7 @@ else:
     save_data(fl,'data',ext_flag=False,x=x,y=y,kap=kap,C=C,nu=nu,D=D)
 
 save_data(fl,'params',ext_flag=False,C=C,kap=kap,nu=nu,D=D,Lx=Lx,Ly=Ly,Npx=Npx, Npy=Npy)
-r=Gensolver(solver,rhs_nonstiff,rhs_stiff,t0,zk,t1,fsave=save_callback,fshow=fshow,dtstep=dtstep,dtshow=dtshow,dtsave=dtsave,rtol=rtol,atol=atol)
+r=Gensolver(solver,rhs_nonstiff,rhs_stiff,t0,zk,t1,fsave=save_callback,fshow=fshow,dtstep=dtstep,dtshow=dtshow,dtsave=dtsave,reltol=rtol,abstol=atol)
 
 try:  
     r.run()

@@ -32,14 +32,14 @@ C=1.0
 nu=1e-3*kymax(ky0,1.0,1.0)**4/kymax(ky0,kap,C)**4
 D=1e-3*kymax(ky0,1.0,1.0)**4/kymax(ky0,kap,C)**4
 
-solver='jl.ROCK4'
+solver='jl.Kvaerno3'
 output = 'out_hyp_'+solver.replace('.','_')+'_kap_' + f'{kap:.1f}'.replace('.', '_') + '_C_' + f'{C:.1f}'.replace('.', '_') + '.h5'
 
 # All times needs to be in float for the solver
 dtstep,dtshow,dtsave=0.1,1.0,1.0
 gamma_time=50/gammax(ky0, kap, C)
 t0,t1=0.0,int(round(gamma_time/dtstep))*dtstep
-rtol,atol=1e-10,1e-12 
+rtol,atol=1e-6,1e-8
 wecontinue=False
 
 w=10.0
@@ -177,6 +177,7 @@ class Gensolver:
         jl.seval("using LinearAlgebra")
         jl.seval("using DiffEqCallbacks") 
         jl.seval("using Sundials")
+        jl.seval("using SparseArrays")
 
         # Pass the python RHS function to Julia
         jl.py_rhs_func = f 
@@ -185,6 +186,11 @@ class Gensolver:
         jl.py_y0 = y0
         jl.py_t0 = t0
         jl.py_t1 = t1
+
+        jl.seval("""
+        # Add a timer to track computation time
+        ct = time()
+        """)
 
         # Define a direct wrapper in Julia that calls the Python function
         jl.seval("""
@@ -196,10 +202,48 @@ class Gensolver:
         end
         """)
 
+        # Fix the jac_prototype function to return an actual matrix pattern instead of a function
+        jl.seval("""
+        # Define a proper function that returns an actual sparse matrix
+        function jac_pattern(u, p, t)
+            n = length(u)
+            half_n = div(n, 2)
+            
+            # Create a sparse matrix with expected sparsity pattern
+            J = spzeros(ComplexF64, n, n)
+            
+            # For illustrative purposes, we set the diagonals for phik and nk
+            # and cross-coupling between phik and nk based on physics
+            
+            # self-coupling for phik variables
+            for i in 1:half_n
+                J[i, i] = 1.0+0.0im  # Mark diagonal entries for phik
+            end
+            
+            # self-coupling for nk variables
+            for i in half_n+1:n
+                J[i, i] = 1.0+0.0im  # Mark diagonal entries for nk
+            end
+            
+            # coupling between phik and nk (cross-terms)
+            for i in 1:half_n
+                J[i, i+half_n] = 1.0+0.0im  # phik depends on nk
+                J[i+half_n, i] = 1.0+0.0im  # nk depends on phik
+            end
+            
+            return J
+        end
+
+        # Create a concrete Jacobian pattern once
+        concrete_jac = jac_pattern(py_y0, nothing, py_t0)
+        """)
+
         # Set up the Julia ODE problem and solver
         jl.seval("""
         # Create the ODE problem using the direct wrapper
-        prob = ODEProblem(direct_rhs_wrapper, py_y0, (py_t0, py_t1))
+        f = ODEFunction(direct_rhs_wrapper, jac_prototype=concrete_jac)
+        prob = ODEProblem(f, py_y0, (py_t0, py_t1))
+        # prob = ODEProblem(direct_rhs_wrapper, py_y0, (py_t0, py_t1))
         """)
         
         self.problem = jl.prob  # Store the Julia problem
@@ -210,6 +254,23 @@ class Gensolver:
             solver_name = "Tsit5()"  # 5th order explicit RK method - efficient for non-stiff problems
         elif solver == 'jl.DP8':
             solver_name = "DP8()"    # 8th order explicit RK - higher accuracy, good for smooth problems
+        # Add SDIRK methods (Jacobian optional, but better with it)
+        elif solver == 'jl.TRBDF2':
+            solver_name = "TRBDF2(autodiff=false)"  # 2nd order SDIRK method - robust for stiff problems
+        elif solver == 'jl.Kvaerno3':
+            solver_name = "Kvaerno3(autodiff=false)"  # 3rd order SDIRK method by Kvaerno
+        elif solver == 'jl.Kvaerno4':
+            solver_name = "Kvaerno4(autodiff=false)"  # 4th order SDIRK method by Kvaerno
+        elif solver == 'jl.KenCarp4':
+            solver_name = "KenCarp4(autodiff=false)"  # 4th order SDIRK method by Kennedy & Carpenter
+        # Add Rosenbrock methods (Jacobian needed)
+        elif solver == 'jl.Rosenbrock23':
+            solver_name = "Rosenbrock23(autodiff=false)"  # 2nd/3rd order Rosenbrock method - good for stiff problems
+        elif solver == 'jl.Rodas4':
+            solver_name = "Rodas4(autodiff=false)"  # 4th order Rosenbrock method - higher accuracy for stiff problems
+        elif solver == 'jl.Rodas5':
+            solver_name = "Rodas5(autodiff=false)"  # 5th order Rosenbrock method - even higher accuracy
+        # Stabilized explicit methods  
         elif solver == 'jl.ROCK2':
             solver_name = "ROCK2()"  # 2nd order stabilized explicit - for mildly stiff problems
         elif solver == 'jl.ROCK4':
@@ -220,6 +281,7 @@ class Gensolver:
         jl.atol_val = kwargs.get('atol', 1e-9)
         jl.dtmax_val = dtstep
         jl.solver_str = solver_name
+        jl.kwargs_py = kwargs
         
         # Pass Python callbacks to Julia
         if callable(fsave):
@@ -252,7 +314,8 @@ class Gensolver:
                 u = integrator.u
                 t = integrator.t
                 
-                print("t=$(t).", " ")
+                elapsed = time() - ct
+                print("t=$(round(t, digits=3)), $(round(elapsed, digits=3)) secs elapsed.", " ")
                 # Call show function
                 py_fshow(t, u)
             end
@@ -265,11 +328,11 @@ class Gensolver:
         
         # Generate save times (ensure we include t0 and t1)
         save_times = vcat([start_time], collect(ceil(start_time/dtsave_val)*dtsave_val:dtsave_val:end_time), [end_time])
-        save_times = sort(unique(save_times))
+        save_times = sort(unique(round.(save_times, digits=3)))
         
         # Generate show times (ensure we include t0 and t1)
         show_times = vcat([start_time], collect(ceil(start_time/dtshow_val)*dtshow_val:dtshow_val:end_time), [end_time])
-        show_times = sort(unique(show_times))
+        show_times = sort(unique(round.(show_times, digits=3))) 
         
         # Create the callbacks
         save_callback = PresetTimeCallback(save_times, save_cb)
@@ -281,14 +344,18 @@ class Gensolver:
         # Create the solver with properly named kwargs
         solver = eval(Meta.parse(solver_str))
         
+        kwargs = Dict{Symbol, Any}()
+        for (k, v) in pairs(kwargs_py)
+            kwargs[Symbol(k)] = v
+        end
+
         # Use solve to create the solution and integrator with callbacks
         integrator = init(prob, solver, 
-                    abstol=atol_val, 
-                    reltol=rtol_val,
                     dtmax=dtmax_val,
                     save_everystep=false,
                     dense=false,
-                    callback=callback_set)
+                    callback=callback_set;
+                    kwargs...)
         """)
         
         self.integrator = jl.integrator
@@ -356,6 +423,7 @@ class JuliaIntegrator:
             
             # Set up step points - first add the final time to ensure we stop there
             all_times = sort(unique(vcat(all_report_times, [final_time])))
+            all_times = round.(all_times, digits=3)  
             
             # Step through the integration manually to the specified points
             for next_time in all_times
@@ -388,7 +456,7 @@ else:
     save_data(fl,'data',ext_flag=False,x=x,y=y,kap=kap,C=C,nu=nu,D=D)
 
 save_data(fl,'params',ext_flag=False,C=C,kap=kap,nu=nu,D=D,Lx=Lx,Ly=Ly,Npx=Npx, Npy=Npy)
-r=Gensolver(solver,rhs,t0,zk,t1,fsave=save_callback,fshow=fshow,dtstep=dtstep,dtshow=dtshow,dtsave=dtsave,rtol=rtol,atol=atol)
+r=Gensolver(solver,rhs,t0,zk,t1,fsave=save_callback,fshow=fshow,dtstep=dtstep,dtshow=dtshow,dtsave=dtsave,reltol=rtol,abstol=atol)
 
 try:
     r.run()
