@@ -29,22 +29,23 @@ x,y=np.meshgrid(np.array(xl),np.array(yl),indexing='ij')
 # Physical parameters
 kap=1.0
 C=1.0
-nu=5e-3*kymax(ky0,1.0,1.0)**2/kymax(ky0,kap,C)**2
-D=5e-3*kymax(ky0,1.0,1.0)**2/kymax(ky0,kap,C)**2
+nu=1e-3*kymax(ky0,1.0,1.0)**4/kymax(ky0,kap,C)**4
+D=1e-3*kymax(ky0,1.0,1.0)**4/kymax(ky0,kap,C)**4
 
 solver='jl.DP8'
+# solver='jl.CKLLSRK43' # Uncomment to use a low-storage method
 output = 'out_'+solver.replace('.','_')+'_kap_' + f'{kap:.1f}'.replace('.', '_') + '_C_' + f'{C:.1f}'.replace('.', '_') + '.h5'
 
 # All times needs to be in float for the solver
 dtstep,dtshow,dtsave=0.1,1.0,1.0
 gamma_time=50/gammax(ky0, kap, C)
 t0,t1=0.0,int(round(gamma_time/dtstep))*dtstep
-rtol,atol=1e-10,1e-12 
+rtol,atol=1e-6,1e-8
 wecontinue=False
 
 w=10.0
-phik=1e-4*np.exp(-lkx**2/2/w**2-lky**2/w**2)*np.exp(1j*2*np.pi*np.random.rand(lkx.size).reshape(lkx.shape))
-nk=1e-4*np.exp(-lkx**2/w**2-lky**2/w**2)*np.exp(1j*2*np.pi*np.random.rand(lkx.size).reshape(lkx.shape))
+phik=1e-3*np.exp(-lkx**2/2/w**2-lky**2/w**2)*np.exp(1j*2*np.pi*np.random.rand(lkx.size).reshape(lkx.shape))
+nk=1e-3*np.exp(-lkx**2/w**2-lky**2/w**2)*np.exp(1j*2*np.pi*np.random.rand(lkx.size).reshape(lkx.shape))
 zk=np.hstack((phik,nk))
 
 del lkx,lky,xl,yl
@@ -127,9 +128,9 @@ def rhs(dy, y, p, t):
     dphikdt[:] += (-C*(phik-nk)/kpsq)*sigk
     dnkdt[:] += (-kap*1j*ky*phik + C*(phik-nk))*sigk
 
-    # Add the viscosity terms on non-zonal modes
-    dphikdt[:] += -nu*kpsq*phik*sigk
-    dnkdt[:] += -D*kpsq*nk*sigk
+    # Add the hyper viscosity terms on non-zonal modes
+    dphikdt[:] += -nu*kpsq**2*phik*sigk
+    dnkdt[:] += -D*kpsq**2*nk*sigk
 
 def save_data(fl,grpname,ext_flag,**kwargs):
     if not (grpname in fl):
@@ -180,7 +181,7 @@ class Gensolver:
         jl.seval("using SparseArrays")
 
         # Pass the python RHS function to Julia
-        jl.py_rhs_func = f 
+        jl.py_rhs = f 
         
         # Pass initial values to Julia
         jl.py_y0 = y0
@@ -190,16 +191,6 @@ class Gensolver:
         jl.seval("""
         # Add a timer to track computation time
         ct = time()
-        """)
-
-        # Define a direct wrapper in Julia that calls the Python function
-        jl.seval("""
-        function direct_rhs_wrapper(du, u, p, t)
-            # Call the Python function directly
-            # Note: Julia will handle passing the values and converting them back
-            py_rhs_func(du, u, nothing, t)
-            return nothing
-        end
         """)
 
         # Fix the jac_prototype function to return an actual matrix pattern instead of a function
@@ -241,9 +232,9 @@ class Gensolver:
         # Set up the Julia ODE problem and solver
         jl.seval("""
         # Create the ODE problem using the direct wrapper
-        f = ODEFunction(direct_rhs_wrapper, jac_prototype=concrete_jac)
+        f = ODEFunction(py_rhs, jac_prototype=concrete_jac)
         prob = ODEProblem(f, py_y0, (py_t0, py_t1))
-        # prob = ODEProblem(direct_rhs_wrapper, py_y0, (py_t0, py_t1))
+        # prob = ODEProblem(py_rhs, py_y0, (py_t0, py_t1))
         """)
         
         self.problem = jl.prob  # Store the Julia problem
@@ -266,15 +257,21 @@ class Gensolver:
         # Add Rosenbrock methods (Jacobian needed)
         elif solver == 'jl.Rosenbrock23':
             solver_name = "Rosenbrock23(autodiff=false)"  # 2nd/3rd order Rosenbrock method - good for stiff problems
+        elif solver == 'jl.Rodas3':
+            solver_name = "Rodas3(autodiff=false)"  # 3rd order Rosenbrock method - balanced accuracy and performance    
         elif solver == 'jl.Rodas4':
             solver_name = "Rodas4(autodiff=false)"  # 4th order Rosenbrock method - higher accuracy for stiff problems
         elif solver == 'jl.Rodas5':
             solver_name = "Rodas5(autodiff=false)"  # 5th order Rosenbrock method - even higher accuracy
-        # Stabilized explicit methods  
-        elif solver == 'jl.ROCK2':
-            solver_name = "ROCK2()"  # 2nd order stabilized explicit - for mildly stiff problems
-        elif solver == 'jl.ROCK4':
-            solver_name = "ROCK4()"  # 4th order stabilized explicit - better accuracy but slower than ROCK2
+        # Add low-storage Runge-Kutta methods
+        elif solver == 'jl.CKLLSRK43':
+            solver_name = "CKLLSRK43()"  # 4th order, 3-register low-storage RK (Chan & Karniadakis 2019)
+        elif solver == 'jl.CKLLSRK54':
+            solver_name = "CKLLSRK54()"  # 5th order, 4-register low-storage RK
+        elif solver == 'jl.CKLLSRK95':
+            solver_name = "CKLLSRK95()"  # 9th order, 5-register low-storage RK
+        elif solver == 'jl.CKLLSRK65':
+            solver_name = "CKLLSRK65()"  # 6th order, 5-register low-storage RK
 
         # Set up solver parameters
         jl.rtol_val = kwargs.get('rtol', 1e-7)
@@ -298,12 +295,12 @@ class Gensolver:
         # Create two callback functions: one for save, one for show
         function save_cb(integrator)
             # Get current state and time
-            u = integrator.u
+            y = integrator.u
             t = integrator.t
             
             # Call all save functions
             for fsave in py_fsave_list
-                fsave(t, u)
+                fsave(t, y)
             end
             return false  # continue integration
         end
@@ -311,13 +308,13 @@ class Gensolver:
         function show_cb(integrator)
             if !isnothing(py_fshow)
                 # Get current state and time
-                u = integrator.u
+                y = integrator.u
                 t = integrator.t
                 
                 elapsed = time() - ct
                 print("t=$(round(t, digits=3)), $(round(elapsed, digits=3)) secs elapsed.", " ")
                 # Call show function
-                py_fshow(t, u)
+                py_fshow(t, y)
             end
             return false  # continue integration
         end

@@ -1,11 +1,17 @@
 256 x 256
 t0=0, t1=468
-hwak_hyp_py_DOP853: 321 secs
-hwak_hyp_py_DOP853_gpu: 81.2 secs
-hwak_hyp_jl_DP8: 240.58 secs
-hwak_hyp_jl_Tsit5: 448 secs
-hwak_hyp_jl_ROCK4: 2588 secs
-hwak_hyp_jl_TRBDF2: 576 secs
-hwak_hyp_jl_Kvaerno3: 913 secs
-hwak_hyp_jl_Rosenbrock23: 1020 secs
+hwak_py_DOP853: 321 secs
+hwak_py_DOP853_gpu: 81.2 secs
+
+hwak_jl_DP8: 240.58 secs
+hwak_jl_DP8_gpu: 
+hwak_jl_Tsit5: 448 secs
+hwak_jl_Tsit5_gpu:  
+hwak_jl_ROCK4: 2588 secs
+hwak_jl_TRBDF2: 576 secs
+hwak_jl_Kvaerno3: 913 secs
+hwak_jl_Rosenbrock23: 1020 secs
+
+1024 x 1024
+t0=0, t1=
 

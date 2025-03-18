@@ -1,11 +1,10 @@
 #%% Import libraries
 
-import cupy as cp
 import numpy as np
 import gc
 import os
-from modules.mlsarray_gpu import mlsarray,slicelist,init_kspace_grid
-from modules.mlsarray_gpu import irft2 as original_irft2, rft2 as original_rft2, irft as original_irft, rft as original_rft
+from modules.mlsarray_cpu import mlsarray,slicelist,init_kspace_grid
+from modules.mlsarray_cpu import irft2 as original_irft2, rft2 as original_rft2, irft as original_irft, rft as original_rft
 from modules.gamma import gammax,kymax
 import h5py as h5
 from time import time
@@ -32,7 +31,7 @@ C=1.0
 nu=1e-3*kymax(ky0,1.0,1.0)**2/kymax(ky0,kap,C)**2
 D=1e-3*kymax(ky0,1.0,1.0)**2/kymax(ky0,kap,C)**2
 
-output = 'out_hyp_py_DOP853_gpu_kap_' + f'{kap:.1f}'.replace('.', '_') + '_C_' + f'{C:.1f}'.replace('.', '_') + '.h5'
+output = 'out_py_DOP853_kap_' + f'{kap:.1f}'.replace('.', '_') + '_C_' + f'{C:.1f}'.replace('.', '_') + '.h5'
 
 # All times needs to be in float for the solver
 dtstep,dtshow,dtsave=0.1,1.0,1.0
@@ -42,9 +41,9 @@ rtol,atol=1e-10,1e-12
 wecontinue=False
 
 w=10.0
-phik=1e-4*cp.exp(-lkx**2/2/w**2-lky**2/w**2)*cp.exp(1j*2*cp.pi*cp.random.rand(lkx.size).reshape(lkx.shape))
-nk=1e-4*cp.exp(-lkx**2/w**2-lky**2/w**2)*cp.exp(1j*2*cp.pi*cp.random.rand(lkx.size).reshape(lkx.shape))
-zk=cp.hstack((phik,nk))
+phik=1e-4*np.exp(-lkx**2/2/w**2-lky**2/w**2)*np.exp(1j*2*np.pi*np.random.rand(lkx.size).reshape(lkx.shape))
+nk=1e-4*np.exp(-lkx**2/w**2-lky**2/w**2)*np.exp(1j*2*np.pi*np.random.rand(lkx.size).reshape(lkx.shape))
+zk=np.hstack((phik,nk))
 
 del lkx,lky,xl,yl
 gc.collect()
@@ -58,7 +57,7 @@ rft = partial(original_rft, Nx=Nx)
 
 # def save_last(t,y,fl):
 #     zk=y.view(dtype=complex)
-#     save_data(fl,'last',ext_flag=False,zk=zk.get(),t=t.get())
+#     save_data(fl,'last',ext_flag=False,zk=zk,t=t)
 
 def save_callback(t,y):
     zk=y.view(dtype=complex)
@@ -67,15 +66,15 @@ def save_callback(t,y):
     vx=irft2(-1j*ky*phik)
     vy=irft2(1j*kx*phik)
     n=irft2(nk)
-    Gam=cp.mean(vx*n,1)
-    Pi=cp.mean(vx*om,1)
-    R=cp.mean(vx*vy,1)
-    vbar=cp.mean(vy,1)
-    ombar=cp.mean(om,1)
-    nbar=cp.mean(n,1)
-    save_data(fl,'fields',ext_flag=True,om=om.get(),n=n.get(),t=t.get())
-    save_data(fl,'fluxes',ext_flag=True,Gam=Gam.get(),Pi=Pi.get(),R=R.get(),t=t.get())
-    save_data(fl,'fields/zonal/',ext_flag=True,vbar=vbar.get(),ombar=ombar.get(),nbar=nbar.get(),t=t.get())
+    Gam=np.mean(vx*n,1)
+    Pi=np.mean(vx*om,1)
+    R=np.mean(vx*vy,1)
+    vbar=np.mean(vy,1)
+    ombar=np.mean(om,1)
+    nbar=np.mean(n,1)
+    save_data(fl,'fields',ext_flag=True,om=om,n=n,t=t)
+    save_data(fl,'fluxes',ext_flag=True,Gam=Gam,Pi=Pi,R=R,t=t)
+    save_data(fl,'fields/zonal/',ext_flag=True,vbar=vbar,ombar=ombar,nbar=nbar,t=t)
 
 def fshow(t,y):
     zk=y.view(dtype=complex)
@@ -84,21 +83,21 @@ def fshow(t,y):
     dyphi=irft2(1j*ky*phik)             
     n=irft2(nk)
 
-    Gam=-cp.mean(n*dyphi)    
-    Ktot, Kbar = cp.sum(kpsq*abs(phik)**2), cp.sum(abs(kx[slbar] * phik[slbar])**2)
-    print(f"Gam={Gam.get():.3g}, Ktot={Ktot:.3g}, Kbar/Ktot={Kbar/Ktot*100:.1f}%")
+    Gam=-np.mean(n*dyphi)    
+    Ktot, Kbar = np.sum(kpsq*abs(phik)**2), np.sum(abs(kx[slbar] * phik[slbar])**2)
+    print(f"Gam={Gam:.3g}, Ktot={Ktot:.3g}, Kbar/Ktot={Kbar/Ktot*100:.1f}%")
                 
     del phik, nk, kpsq, dyphi, n
 
 def rhs(t,y):
     #Get the fields and create the time derivative
     zk=y.view(dtype=complex)
-    dzkdt=cp.zeros_like(zk)
+    dzkdt=np.zeros_like(zk)
     phik,nk=zk[:int(zk.size/2)],zk[int(zk.size/2):]
     dphikdt,dnkdt=dzkdt[:int(zk.size/2)],dzkdt[int(zk.size/2):]
 
     kpsq=kx**2+ky**2
-    sigk = cp.sign(ky) # zero for ky=0, 1 for ky>0
+    sigk = np.sign(ky) # zero for ky=0, 1 for ky>0
 
     # Compute all the fields in real space that we need 
     dxphi=irft2(1j*kx*phik)
@@ -113,7 +112,7 @@ def rhs(t,y):
     dphikdt[:] += (-C*(phik-nk)/kpsq)*sigk
     dnkdt[:] += (-kap*1j*ky*phik + C*(phik-nk))*sigk
 
-    # Add the viscosity terms on non-zonal modes
+    # Add the hyper viscosity terms on non-zonal modes
     dphikdt[:] += -nu*kpsq**2*phik*sigk
     dnkdt[:] += -D*kpsq**2*nk*sigk
 
@@ -126,8 +125,6 @@ def save_data(fl,grpname,ext_flag,**kwargs):
     else:
         grp=fl[grpname]
     for l,m in kwargs.items():
-        if hasattr(m, 'get'):
-            m = m.get()
         if not l in grp:
             if(not ext_flag):
                 grp[l]=m
@@ -243,10 +240,10 @@ class Gensolver:
 if(wecontinue):
     fl=h5.File(output,'r+',libver='latest')
     fl.swmr_mode = True
-    omk,nk=rft2(cp.array(fl['fields/om'][-1,])),rft2(cp.array(fl['fields/n'][-1,]))
+    omk,nk=rft2(np.array(fl['fields/om'][-1,])),rft2(np.array(fl['fields/n'][-1,]))
     phik=-omk/(kx**2+ky**2)
     t0=fl['fields/t'][-1]
-    zk=cp.hstack((phik,nk))
+    zk=np.hstack((phik,nk))
 else:
     fl=h5.File(output,'w',libver='latest')
     fl.swmr_mode = True
@@ -254,6 +251,6 @@ else:
     save_data(fl,'data',ext_flag=False,x=x,y=y,kap=kap,C=C,nu=nu,D=D)
 
 save_data(fl,'params',ext_flag=False,C=C,kap=kap,nu=nu,D=D,Lx=Lx,Ly=Ly,Npx=Npx, Npy=Npy)
-r=Gensolver('cupy_ivp.DOP853',rhs,t0,zk.view(dtype=float),t1,fsave=save_callback,fshow=fshow,dtstep=dtstep,dtshow=dtshow,dtsave=dtsave,rtol=rtol,atol=atol)
+r=Gensolver('scipy.DOP853',rhs,t0,zk.view(dtype=float),t1,fsave=save_callback,fshow=fshow,dtstep=dtstep,dtshow=dtshow,dtsave=dtsave,rtol=rtol,atol=atol)
 r.run()
 fl.close()

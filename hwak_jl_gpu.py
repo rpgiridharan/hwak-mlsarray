@@ -34,7 +34,8 @@ nu=1e-3*kymax(ky0,1.0,1.0)**4/kymax(ky0,kap,C)**4
 D=1e-3*kymax(ky0,1.0,1.0)**4/kymax(ky0,kap,C)**4
 
 solver='jl.DP8'
-output = 'out_hyp_'+solver.replace('.','_')+'_gpu_kap_'+f'{kap:.1f}'.replace('.', '_') + '_C_' + f'{C:.1f}'.replace('.', '_') + '.h5'
+# solver='jl.CKLLSRK43' # Uncomment to use a low-storage method
+output = 'out_'+solver.replace('.','_')+'_gpu_kap_'+f'{kap:.1f}'.replace('.', '_') + '_C_' + f'{C:.1f}'.replace('.', '_') + '.h5'
 
 # All times needs to be in float for the solver
 dtstep,dtshow,dtsave=0.1,1.0,1.0
@@ -97,82 +98,40 @@ def rhs(dy, y, p, t):
     """GPU-aware RHS function for Julia's ODE solvers
     
     Arguments:
-        dy: output array where derivatives should be stored (CuArray if GPU)
-        y: current state vector (CuArray if GPU)
+        dy: output array where derivatives should be stored (CuArray)
+        y: current state vector (CuArray)
         p: parameters (unused)
         t: current time
     """
-    # Check if arrays are on GPU
-    on_gpu = hasattr(y, '__cuda_array_interface__') or hasattr(y, 'device')
+    # Always assume we're on GPU
+    zk = cp.array(y, copy=False)
+    dzkdt = cp.array(dy, copy=False)
     
-    if on_gpu:
-        # GPU version using CuPy
-        xp = cp
-        
-        # Use GPU transforms (assuming you've implemented GPU versions)
-        irft2_gpu = partial(gpu_irft2, Npx=Npx, Npy=Npy, sl=sl)
-        rft2_gpu = partial(gpu_rft2, sl=sl)
-        
-        zk = cp.array(y, copy=False)
-        dzkdt = cp.array(dy, copy=False)
-        
-        # Split zk into phik and nk
-        phik, nk = zk[:int(zk.size/2)], zk[int(zk.size/2):]
-        
-        # Split dzkdt into dphikdt and dnkdt
-        dphikdt, dnkdt = dzkdt[:int(zk.size/2)], dzkdt[int(zk.size/2):]
-
-        kpsq = cp.array(kx**2 + ky**2)
-        sigk = cp.sign(cp.array(ky))  # zero for ky=0, 1 for ky>0
-
-        # Compute all the fields in real space that we need 
-        dxphi = irft2_gpu(1j*cp.array(kx)*phik)
-        dyphi = irft2_gpu(1j*cp.array(ky)*phik)
-        n = irft2_gpu(nk)
-        
-        # Compute the non-linear terms
-        dphikdt[:] = -1*(cp.array(kx)*cp.array(ky)*rft2_gpu(dxphi**2-dyphi**2) + 
-                         (cp.array(ky)**2-cp.array(kx)**2)*rft2_gpu(dxphi*dyphi))/kpsq
-        dnkdt[:] = 1j*cp.array(kx)*rft2_gpu(dyphi*n) - 1j*cp.array(ky)*rft2_gpu(dxphi*n)
-
-        # Add the linear terms on non-zonal modes
-        dphikdt[:] += (-C*(phik-nk)/kpsq)*sigk
-        dnkdt[:] += (-kap*1j*cp.array(ky)*phik + C*(phik-nk))*sigk
-
-        # Add the hyper viscosity terms on non-zonal modes
-        dphikdt[:] += -nu*kpsq**2*phik*sigk
-        dnkdt[:] += -D*kpsq**2*nk*sigk
+    # Split zk into phik and nk
+    phik, nk = zk[:int(zk.size/2)], zk[int(zk.size/2):]
     
-    else:
-        # Use the original CPU implementation
-        zk = cp.array(y, copy=False)
-        dzkdt = cp.array(dy, copy=False)
+    # Split dzkdt into dphikdt and dnkdt
+    dphikdt, dnkdt = dzkdt[:int(zk.size/2)], dzkdt[int(zk.size/2):]
 
-        # Split zk into phik and nk
-        phik, nk = zk[:int(zk.size/2)], zk[int(zk.size/2):]
-        
-        # Split dzkdt into dphikdt and dnkdt
-        dphikdt, dnkdt = dzkdt[:int(zk.size/2)], dzkdt[int(zk.size/2):]
+    kpsq = kx**2 + ky**2
+    sigk = cp.sign(ky)  # zero for ky=0, 1 for ky>0
 
-        kpsq = kx**2 + ky**2
-        sigk = cp.sign(ky) # zero for ky=0, 1 for ky>0
+    # Compute all the fields in real space that we need 
+    dxphi = irft2(1j*kx*phik)
+    dyphi = irft2(1j*ky*phik)
+    n = irft2(nk)
+    
+    # Compute the non-linear terms
+    dphikdt[:] = -1*(kx*ky*rft2(dxphi**2-dyphi**2) + (ky**2-kx**2)*rft2(dxphi*dyphi))/kpsq
+    dnkdt[:] = 1j*kx*rft2(dyphi*n) - 1j*ky*rft2(dxphi*n)
 
-        # Compute all the fields in real space that we need 
-        dxphi = irft2(1j*kx*phik)
-        dyphi = irft2(1j*ky*phik)
-        n = irft2(nk)
-        
-        # Compute the non-linear terms
-        dphikdt[:] = -1*(kx*ky*rft2(dxphi**2-dyphi**2) + (ky**2-kx**2)*rft2(dxphi*dyphi))/kpsq
-        dnkdt[:] = 1j*kx*rft2(dyphi*n) - 1j*ky*rft2(dxphi*n)
+    # Add the linear terms on non-zonal modes
+    dphikdt[:] += (-C*(phik-nk)/kpsq)*sigk
+    dnkdt[:] += (-kap*1j*ky*phik + C*(phik-nk))*sigk
 
-        # Add the linear terms on non-zonal modes
-        dphikdt[:] += (-C*(phik-nk)/kpsq)*sigk
-        dnkdt[:] += (-kap*1j*ky*phik + C*(phik-nk))*sigk
-
-        # Add the hyper viscosity terms on non-zonal modes
-        dphikdt[:] += -nu*kpsq**2*phik*sigk
-        dnkdt[:] += -D*kpsq**2*nk*sigk
+    # Add the hyper viscosity terms on non-zonal modes
+    dphikdt[:] += -nu*kpsq**2*phik*sigk
+    dnkdt[:] += -D*kpsq**2*nk*sigk
 
 def save_data(fl,grpname,ext_flag,**kwargs):
     if not (grpname in fl):
@@ -205,7 +164,7 @@ def save_data(fl,grpname,ext_flag,**kwargs):
         fl.flush()
 
 class Gensolver:    
-    def __init__(self, solver, f, t0, y0, t1, fsave, fshow=None, fy=None, dtstep=0.1, dtshow=None, dtsave=None, dtfupdate=None, force_update=None, use_gpu=False, **kwargs):
+    def __init__(self, solver, f, t0, y0, t1, fsave, fshow=None, fy=None, dtstep=0.1, dtshow=None, dtsave=None, dtfupdate=None, force_update=None, **kwargs):
         if(dtshow is None):
             dtshow=dtstep
         if(dtsave is None):
@@ -215,79 +174,55 @@ class Gensolver:
         if isinstance(dtsave,list) or isinstance(dtsave,tuple):
             dtsave=np.array(dtsave)
 
-        # Store GPU flag
-        self.use_gpu = use_gpu
-        if use_gpu:
-            self.cp = cp  # Store CuPy reference
+        self.cp = cp  
             
-            # Configure Julia to suppress CUDA library loading warnings
-            jl.seval("""
-            ENV["JULIA_CUDA_SOFT_RUNTIME_LOADING"] = "1"
-            ENV["JULIA_CUDA_SILENT"] = "1"
-            """)
+        # Configure Julia to suppress CUDA library loading warnings
+        jl.seval("""
+        ENV["JULIA_CUDA_SOFT_RUNTIME_LOADING"] = "1"
+        ENV["JULIA_CUDA_SILENT"] = "1"
+        """)
 
-            # Initialize Julia GPU environment
-            jl.seval("using CUDA")
-            jl.seval("using OrdinaryDiffEq") 
-            jl.seval("using LinearAlgebra")
-            jl.seval("using DiffEqCallbacks")
-            jl.seval("using Sundials")
-            jl.seval("using SparseArrays")
-            
-            # Check if CUDA is available
-            jl.seval("cuda_available = CUDA.functional()")
-            
-            if not jl.cuda_available:
-                print("Warning: CUDA not available in Julia. Falling back to CPU.")
-                self.use_gpu = False
-        else:
-            # Standard Julia environment setup
-            jl.seval("using OrdinaryDiffEq")
-            jl.seval("using LinearAlgebra")
-            jl.seval("using DiffEqCallbacks") 
-            jl.seval("using Sundials")
-            jl.seval("using SparseArrays")
+        # Initialize Julia GPU environment
+        jl.seval("using CUDA")
+        jl.seval("using OrdinaryDiffEq") 
+        jl.seval("using LinearAlgebra")
+        jl.seval("using DiffEqCallbacks")
+        jl.seval("using Sundials")
+        jl.seval("using SparseArrays")
 
         # Pass the python RHS function to Julia
-        jl.py_rhs_func = f 
+        jl.py_rhs = lambda dy,y,p,t : f(self.jltocp(dy,y0),self.jltocp(y,y0),p,t) 
         
-        # Pass initial values to Julia
-        if self.use_gpu:
-            # Move initial data to GPU if it's not already there
-            if not isinstance(y0, cp.ndarray):
-                y0 = cp.asarray(y0)
+        # Move initial data to GPU if it's not already there
+        if not isinstance(y0, cp.ndarray):
+            y0 = cp.asarray(y0)
 
-            # Pass the CuPy array pointer to Julia and create a CuArray that shares the same memory
-            jl.y0_ptr = y0.data.ptr
-            jl.y0_shape = y0.shape
-            jl.y0_size = y0.size
-            jl.y0_dtype = str(y0.dtype)
+        # Pass the CuPy array pointer to Julia and create a CuArray that shares the same memory
+        jl.y0_ptr = y0.data.ptr
+        jl.y0_shape = y0.shape
+        jl.y0_size = y0.size
+        jl.y0_dtype = str(y0.dtype)
 
-            print(str(y0.dtype))
+        # Create a CuArray that shares memory with the CuPy array (generally complex128)
+        jl.seval("""
+            if y0_dtype == "complex128"
+                y0_p = CuPtr{ComplexF64}(convert(UInt64, y0_ptr))
+                py_y0_gpu = unsafe_wrap(CuArray, y0_p, (y0_size,))
+            elseif y0_dtype == "float64"
+                y0_p = CuPtr{Float64}(convert(UInt64, y0_ptr))
+                py_y0_gpu = unsafe_wrap(CuArray, y0_p, (y0_size,))
+            elseif y0_dtype == "complex64"
+                y0_p = CuPtr{ComplexF32}(convert(UInt64, y0_ptr))
+                py_y0_gpu = unsafe_wrap(CuArray, y0_p, (y0_size,))
+            elseif y0_dtype == "float32"
+                y0_p = CuPtr{Float32}(convert(UInt64, y0_ptr))
+                py_y0_gpu = unsafe_wrap(CuArray, y0_p, (y0_size,))
+            else
+                error("Unsupported dtype: $y0_dtype")
+            end
+        """)
 
-            jl.seval("""
-                # Create a CuArray that shares memory with the CuPy array
-                if y0_dtype == "complex128"
-                    y0_p = CuPtr{ComplexF64}(convert(UInt64, y0_ptr))
-                    py_y0_gpu = unsafe_wrap(CuArray, y0_p, (y0_size,))
-                elseif y0_dtype == "float64"
-                    y0_p = CuPtr{Float64}(convert(UInt64, y0_ptr))
-                    py_y0_gpu = unsafe_wrap(CuArray, y0_p, (y0_size,))
-                elseif y0_dtype == "complex64"
-                    y0_p = CuPtr{ComplexF32}(convert(UInt64, y0_ptr))
-                    py_y0_gpu = unsafe_wrap(CuArray, y0_p, (y0_size,))
-                elseif y0_dtype == "float32"
-                    y0_p = CuPtr{Float32}(convert(UInt64, y0_ptr))
-                    py_y0_gpu = unsafe_wrap(CuArray, y0_p, (y0_size,))
-                else
-                    error("Unsupported dtype: $y0_dtype")
-                end
-            """)
-
-            jl.py_y0 = jl.py_y0_gpu
-        else:
-            jl.py_y0 = y0
-
+        jl.py_y0 = jl.py_y0_gpu
         jl.py_t0 = t0
         jl.py_t1 = t1
 
@@ -295,26 +230,6 @@ class Gensolver:
         # Add a timer to track computation time
         ct = time()
         """)
-
-        # Define the RHS wrapper based on GPU usage
-        if self.use_gpu:
-            jl.seval("""
-            function gpu_rhs_wrapper(du, u, p, t)
-                # Call Python function with GPU arrays
-                # Need to handle data transfer between Julia and Python's GPU arrays
-                py_rhs_func(du, u, nothing, t)
-                return nothing
-            end
-            """)
-            jl.direct_rhs_wrapper = jl.gpu_rhs_wrapper
-        else:
-            jl.seval("""
-            function direct_rhs_wrapper(du, u, p, t)
-                # Call the Python function directly
-                py_rhs_func(du, u, nothing, t)
-                return nothing
-            end
-            """)
 
         # Fix the jac_prototype function to return an actual matrix pattern instead of a function
         jl.seval("""
@@ -353,18 +268,12 @@ class Gensolver:
         """)
 
         # Set up the Julia ODE problem and solver with GPU awareness
-        if self.use_gpu:
-            jl.seval("""
-            # Create the ODE problem using the GPU wrapper
-            f = ODEFunction(gpu_rhs_wrapper, jac_prototype=concrete_jac)
-            prob = ODEProblem(f, py_y0, (py_t0, py_t1))
-            """)
-        else:
-            jl.seval("""
-            # Create the ODE problem using the direct wrapper
-            f = ODEFunction(direct_rhs_wrapper, jac_prototype=concrete_jac)
-            prob = ODEProblem(f, py_y0, (py_t0, py_t1))
-            """)
+        jl.seval("""
+        # Create the ODE problem using the GPU wrapper
+        f = ODEFunction(py_rhs, jac_prototype=concrete_jac)
+        prob = ODEProblem(f, py_y0, (py_t0, py_t1))
+        # prob = ODEProblem(py_rhs, py_y0, (py_t0, py_t1))
+        """)
         
         self.problem = jl.prob  # Store the Julia problem
 
@@ -392,11 +301,15 @@ class Gensolver:
             solver_name = "Rodas4(autodiff=false)"  # 4th order Rosenbrock method - higher accuracy for stiff problems
         elif solver == 'jl.Rodas5':
             solver_name = "Rodas5(autodiff=false)"  # 5th order Rosenbrock method - even higher accuracy
-        # Stabilized explicit methods  
-        elif solver == 'jl.ROCK2':
-            solver_name = "ROCK2()"  # 2nd order stabilized explicit - for mildly stiff problems
-        elif solver == 'jl.ROCK4':
-            solver_name = "ROCK4()"  # 4th order stabilized explicit - better accuracy but slower than ROCK2
+        # Add low-storage Runge-Kutta methods
+        elif solver == 'jl.CKLLSRK43':
+            solver_name = "CKLLSRK43()"  # 4th order, 3-register low-storage RK (Chan & Karniadakis 2019)
+        elif solver == 'jl.CKLLSRK54':
+            solver_name = "CKLLSRK54()"  # 5th order, 4-register low-storage RK
+        elif solver == 'jl.CKLLSRK95':
+            solver_name = "CKLLSRK95()"  # 9th order, 5-register low-storage RK
+        elif solver == 'jl.CKLLSRK65':
+            solver_name = "CKLLSRK65()"  # 6th order, 5-register low-storage RK
 
         # Set up solver parameters
         jl.rtol_val = kwargs.get('rtol', 1e-7)
@@ -404,14 +317,18 @@ class Gensolver:
         jl.dtmax_val = dtstep
         jl.solver_str = solver_name
         jl.kwargs_py = kwargs
-        
+
+        self.jl = jl
+
         # Pass Python callbacks to Julia
         if callable(fsave):
-            jl.py_fsave_list = [fsave]
+            # Create a list with the single function and proper conversion
+            jl.py_fsave_list = [lambda t, y: fsave(t, self.jltocp(y, y0))]
         else:
-            jl.py_fsave_list = fsave
+            # Assuming fsave is already a list of functions with proper conversion
+            jl.py_fsave_list = [lambda t, y, f=f: f(t, self.jltocp(y, y0)) for f in fsave]
             
-        jl.py_fshow = fshow
+        jl.py_fshow = lambda t, y: fshow(t,self.jltocp(y, y0))
         jl.dtsave_val = dtsave[0]
         jl.dtshow_val = dtshow
         
@@ -420,12 +337,12 @@ class Gensolver:
         # Create two callback functions: one for save, one for show
         function save_cb(integrator)
             # Get current state and time
-            u = integrator.u
+            y = integrator.u
             t = integrator.t
             
             # Call all save functions
             for fsave in py_fsave_list
-                fsave(t, u)
+                fsave(t, y)
             end
             return false  # continue integration
         end
@@ -433,13 +350,13 @@ class Gensolver:
         function show_cb(integrator)
             if !isnothing(py_fshow)
                 # Get current state and time
-                u = integrator.u
+                y = integrator.u
                 t = integrator.t
                 
                 elapsed = time() - ct
                 print("t=$(round(t, digits=3)), $(round(elapsed, digits=3)) secs elapsed.", " ")
                 # Call show function
-                py_fshow(t, u)
+                py_fshow(t, y)
             end
             return false  # continue integration
         end
@@ -500,9 +417,6 @@ class Gensolver:
             self.fsave = fsave
         self.fshow = fshow
         self.jl = jl
-        # Add the jltocp method for GPU data transfer
-        if self.use_gpu:
-            self.jltocp = self._jltocp
 
     def run(self, verbose=True):
         """Run the integration with the callbacks already configured in Julia"""
@@ -513,7 +427,8 @@ class Gensolver:
         # Note: We don't need to manually call fsave or fshow at the end
         # because the Julia callbacks will handle this at t1
     
-    def _jltocp(self, y, zk):
+    # Add the jltocp method for GPU data transfer
+    def jltocp(self, y, zk):
         """Convert Julia GPU array to CuPy array by memory sharing
         
         Arguments:
@@ -527,6 +442,39 @@ class Gensolver:
         mem = self.cp.cuda.UnownedMemory(p, zk.nbytes, None)
         memptr = self.cp.cuda.MemoryPointer(mem, 0)
         return self.cp.ndarray(zk.shape, dtype=zk.dtype, memptr=memptr)
+
+    def cleanup(self):
+        """Clean up resources to free GPU memory"""
+        if hasattr(self, 'r'):
+            self.r.cleanup()
+            
+        # Clear Julia variables that might hold GPU arrays
+        if hasattr(self, 'jl'):
+            self.jl.seval("""
+            # Clear any global variables holding GPU arrays
+            if @isdefined py_y0_gpu
+                py_y0_gpu = nothing
+            end
+            
+            if @isdefined prob
+                prob = nothing
+            end
+            
+            if @isdefined integrator
+                integrator = nothing
+            end
+            
+            # Force garbage collection in Julia
+            GC.gc(true)
+            
+            # Explicitly reclaim GPU memory
+            if CUDA.functional()
+                CUDA.reclaim()
+            end
+            """)
+        
+        # Force Python garbage collection
+        gc.collect()
 
 class JuliaIntegrator:
     """Python wrapper for Julia integrator to mimic scipy interface"""
@@ -578,7 +526,27 @@ class JuliaIntegrator:
         
         # Get updated time and solution
         self.t = self.jl.integrator.t 
-        self.y = self.jl.integrator.u 
+        self.y = self.jl.integrator.u
+    
+    def cleanup(self):
+        """Explicitly clean up Julia GPU resources"""
+        try:
+            self.jl.seval("""
+            # Clear integrator's solution to free memory
+            if isdefined(Main, :integrator) && integrator !== nothing
+                integrator = nothing
+            end
+            
+            # Force garbage collection in Julia
+            GC.gc(true)
+            
+            # Explicitly clear GPU memory 
+            if CUDA.functional()
+                CUDA.reclaim()
+            end
+            """)
+        except Exception as e:
+            print(f"Warning: Error during Julia GPU cleanup: {e}")
 
 #%% Run the simulation
 
@@ -598,13 +566,29 @@ else:
 save_data(fl,'params',ext_flag=False,C=C,kap=kap,nu=nu,D=D,Lx=Lx,Ly=Ly,Npx=Npx, Npy=Npy)
 r=Gensolver(solver,rhs,t0,zk,t1,fsave=save_callback,fshow=fshow,
             dtstep=dtstep,dtshow=dtshow,dtsave=dtsave,
-            use_gpu=True,reltol=rtol,abstol=atol)
+            reltol=rtol,abstol=atol)
 
 try:
     r.run()
-except Exception as e:
-    print(f"Error during simulation: {str(e)}")
 finally:
-    # No need to cancel alarm
+    # Clean up GPU resources explicitly
+    if hasattr(r, 'cleanup'):
+        r.cleanup()
+    
+    # Clear any remaining CuPy arrays
+    del zk
+    if 'phik' in locals(): del phik
+    if 'nk' in locals(): del nk
+    
+    # Force CuPy to release memory
+    mempool = cp.get_default_memory_pool()
+    pinned_mempool = cp.get_default_pinned_memory_pool()
+    mempool.free_all_blocks()
+    pinned_mempool.free_all_blocks()
+    
+    # Force Python garbage collection
+    gc.collect()
+    
+    # Close the output file
     fl.close()
-    print("Output file closed")
+    print("Output file closed and GPU memory released")

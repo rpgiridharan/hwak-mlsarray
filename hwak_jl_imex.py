@@ -33,7 +33,7 @@ nu=1e-3*kymax(ky0,1.0,1.0)**4/kymax(ky0,kap,C)**4
 D=1e-3*kymax(ky0,1.0,1.0)**4/kymax(ky0,kap,C)**4
 
 solver='jl.KenCarp3'
-output = 'out_hyp_'+solver.replace('.','_')+'_kap_' + f'{kap:.1f}'.replace('.', '_') + '_C_' + f'{C:.1f}'.replace('.', '_') + '.h5'
+output = 'out_'+solver.replace('.','_')+'_kap_' + f'{kap:.1f}'.replace('.', '_') + '_C_' + f'{C:.1f}'.replace('.', '_') + '.h5'
 
 # All times needs to be in float for the solver
 dtstep,dtshow,dtsave=0.05,1.0,1.0
@@ -134,8 +134,8 @@ def rhs_stiff(dy, y, p, t):
     sigk = np.sign(ky) # zero for ky=0, 1 for ky>0
     
     # Add the hyper viscosity terms on non-zonal modes
-    dphikdt[:] = -nu*kpsq*phik*sigk
-    dnkdt[:] = -D*kpsq*nk*sigk
+    dphikdt[:] = -nu*kpsq**2*phik*sigk
+    dnkdt[:] = -D*kpsq**2*nk*sigk
 
 def save_data(fl,grpname,ext_flag,**kwargs):
     if not (grpname in fl):

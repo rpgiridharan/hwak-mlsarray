@@ -11,18 +11,12 @@ from mpi4py import MPI
 comm = MPI.COMM_WORLD
 comm.Barrier()
 # infl = "out_py_DOP853_kap_1_0_C_1_0.h5"
+# infl = "out_py_DOP853_gpu_kap_1_0_C_1_0.h5"
 # infl = "out_jl_DP8_kap_1_0_C_1_0.h5"
-# infl = "out_jl_ROCK4_kap_1_0_C_1_0.h5"
+# infl = "out_jl_Tsit5_kap_1_0_C_1_0.h5"
+infl = "out_jl_DP8_gpu_kap_1_0_C_1_0.h5"
+# infl = "out_jl_Tsit5_gpu_kap_1_0_C_1_0.h5"
 
-# infl = "out_hyp_py_DOP853_kap_1_0_C_1_0.h5"
-# infl = "out_hyp_py_DOP853_gpu_kap_1_0_C_1_0.h5"
-# infl = "out_hyp_jl_DP8_kap_1_0_C_1_0.h5"
-# infl = "out_hyp_jl_Tsit5_kap_1_0_C_1_0.h5"
-# infl = "out_hyp_jl_ROCK4_kap_1_0_C_1_0.h5"
-# infl = "out_hyp_jl_TRBDF2_kap_1_0_C_1_0.h5"
-# infl = "out_hyp_jl_Rosenbrock23_kap_1_0_C_1_0.h5"
-infl = "out_hyp_jl_Kvaerno3_kap_1_0_C_1_0.h5"
-# infl = "out_hyp_jl_KenCarp47_kap_1_0_C_1_0.h5"
 outfl = infl.replace(".h5", ".mp4")
 
 with h5.File(infl, "r", libver='latest', swmr=True) as fl:
