@@ -14,8 +14,9 @@ comm.Barrier()
 # infl = "out_py_DOP853_gpu_kap_1_0_C_1_0.h5"
 # infl = "out_jl_DP8_kap_1_0_C_1_0.h5"
 # infl = "out_jl_Tsit5_kap_1_0_C_1_0.h5"
-infl = "out_jl_DP8_gpu_kap_1_0_C_1_0.h5"
+# infl = "out_jl_DP8_gpu_kap_1_0_C_1_0.h5"
 # infl = "out_jl_Tsit5_gpu_kap_1_0_C_1_0.h5"
+infl ="out_jl_CKLLSRK43_2_gpu_kap_1_0_C_1_0.h5"
 
 outfl = infl.replace(".h5", ".mp4")
 

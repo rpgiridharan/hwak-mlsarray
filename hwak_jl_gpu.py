@@ -33,7 +33,7 @@ C=1.0
 nu=1e-3*kymax(ky0,1.0,1.0)**4/kymax(ky0,kap,C)**4
 D=1e-3*kymax(ky0,1.0,1.0)**4/kymax(ky0,kap,C)**4
 
-solver='jl.DP8'
+solver='jl.CKLLSRK43_2'
 # solver='jl.CKLLSRK43' # Uncomment to use a low-storage method
 output = 'out_'+solver.replace('.','_')+'_gpu_kap_'+f'{kap:.1f}'.replace('.', '_') + '_C_' + f'{C:.1f}'.replace('.', '_') + '.h5'
 
@@ -298,15 +298,13 @@ class Gensolver:
             solver_name = "Rodas4(autodiff=false)"  # 4th order Rosenbrock method - higher accuracy for stiff problems
         elif solver == 'jl.Rodas5':
             solver_name = "Rodas5(autodiff=false)"  # 5th order Rosenbrock method - even higher accuracy
-        # Add low-storage Runge-Kutta methods
-        elif solver == 'jl.CKLLSRK43':
-            solver_name = "CKLLSRK43()"  # 4th order, 3-register low-storage RK (Chan & Karniadakis 2019)
-        elif solver == 'jl.CKLLSRK54':
-            solver_name = "CKLLSRK54()"  # 5th order, 4-register low-storage RK
-        elif solver == 'jl.CKLLSRK95':
-            solver_name = "CKLLSRK95()"  # 9th order, 5-register low-storage RK
-        elif solver == 'jl.CKLLSRK65':
-            solver_name = "CKLLSRK65()"  # 6th order, 5-register low-storage RK
+        # Add specific low-storage Runge-Kutta methods
+        elif solver == 'jl.CKLLSRK43_2':
+            solver_name = "CKLLSRK43_2()"  # 4-stage, 3rd order low-storage scheme
+        elif solver == 'jl.CKLLSRK54_3N_3R':
+            solver_name = "CKLLSRK54_3N_3R()"  # 5-stage, 4th order, 3-register scheme
+        elif solver == 'jl.CKLLSRK65_4M_4R':
+            solver_name = "CKLLSRK65_4M_4R()"  # 6-stage, 5th order, 4-register scheme
 
         # Set up solver parameters
         jl.rtol_val = kwargs.get('rtol', 1e-7)
