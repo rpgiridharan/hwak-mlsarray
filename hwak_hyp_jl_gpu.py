@@ -44,9 +44,9 @@ rtol,atol=1e-6,1e-8
 wecontinue=False
 
 w=10.0
-phik=1e-3*np.exp(-lkx**2/2/w**2-lky**2/w**2)*np.exp(1j*2*np.pi*np.random.rand(lkx.size).reshape(lkx.shape))
-nk=1e-3*np.exp(-lkx**2/w**2-lky**2/w**2)*np.exp(1j*2*np.pi*np.random.rand(lkx.size).reshape(lkx.shape))
-zk=np.hstack((phik,nk))
+phik=1e-3*cp.exp(-lkx**2/2/w**2-lky**2/w**2)*cp.exp(1j*2*cp.pi*cp.random.rand(lkx.size).reshape(lkx.shape))
+nk=1e-3*cp.exp(-lkx**2/w**2-lky**2/w**2)*cp.exp(1j*2*cp.pi*cp.random.rand(lkx.size).reshape(lkx.shape))
+zk=cp.hstack((phik,nk))
 
 del lkx,lky,xl,yl
 gc.collect()
@@ -59,36 +59,36 @@ irft = partial(original_irft, Npx=Npx, Nx=Nx)
 rft = partial(original_rft, Nx=Nx)
 
 # def save_last(t,y,fl):
-#     zk = np.array(y, copy=False)
+#     zk = cp.array(y, copy=False)
 #     save_data(fl,'last',ext_flag=False,zk=zk,t=t)
 
 def save_callback(t, y):
     # Ensure y is a proper numpy array
-    zk = np.array(y, copy=False)
+    zk = cp.array(y, copy=False)
     phik, nk = zk[:int(zk.size/2)], zk[int(zk.size/2):]
     om = irft2(-phik*(kx**2+ky**2))
     vx = irft2(-1j*ky*phik)
     vy = irft2(1j*kx*phik)
     n = irft2(nk)
-    Gam = np.mean(vx*n, 1)
-    Pi = np.mean(vx*om, 1)
-    R = np.mean(vx*vy, 1)
-    vbar = np.mean(vy, 1)
-    ombar = np.mean(om, 1)
-    nbar = np.mean(n, 1)
+    Gam = cp.mean(vx*n, 1)
+    Pi = cp.mean(vx*om, 1)
+    R = cp.mean(vx*vy, 1)
+    vbar = cp.mean(vy, 1)
+    ombar = cp.mean(om, 1)
+    nbar = cp.mean(n, 1)
     save_data(fl, 'fields', ext_flag=True, om=om, n=n, t=t)
     save_data(fl, 'fluxes', ext_flag=True, Gam=Gam, Pi=Pi, R=R, t=t)
     save_data(fl, 'fields/zonal/', ext_flag=True, vbar=vbar, ombar=ombar, nbar=nbar, t=t)
 
 def fshow(t, y):
-    zk = np.array(y, copy=False)
+    zk = cp.array(y, copy=False)
     phik, nk = zk[:int(zk.size/2)], zk[int(zk.size/2):]
     kpsq = kx**2 + ky**2
     dyphi = irft2(1j*ky*phik)             
     n = irft2(nk)
 
-    Gam = -np.mean(n*dyphi)
-    Ktot, Kbar = np.sum(kpsq*abs(phik)**2), np.sum(abs(kx[slbar] * phik[slbar])**2)
+    Gam = -cp.mean(n*dyphi)
+    Ktot, Kbar = cp.sum(kpsq*abs(phik)**2), cp.sum(abs(kx[slbar] * phik[slbar])**2)
     
     # Print without elapsed time
     print(f"Gam={Gam:.3g}, Ktot={Ktot:.3g}, Kbar/Ktot={Kbar/Ktot*100:.1f}%")
@@ -145,8 +145,8 @@ def rhs(dy, y, p, t):
     
     else:
         # Use the original CPU implementation
-        zk = np.array(y, copy=False)
-        dzkdt = np.array(dy, copy=False)
+        zk = cp.array(y, copy=False)
+        dzkdt = cp.array(dy, copy=False)
 
         # Split zk into phik and nk
         phik, nk = zk[:int(zk.size/2)], zk[int(zk.size/2):]
@@ -155,7 +155,7 @@ def rhs(dy, y, p, t):
         dphikdt, dnkdt = dzkdt[:int(zk.size/2)], dzkdt[int(zk.size/2):]
 
         kpsq = kx**2 + ky**2
-        sigk = np.sign(ky) # zero for ky=0, 1 for ky>0
+        sigk = cp.sign(ky) # zero for ky=0, 1 for ky>0
 
         # Compute all the fields in real space that we need 
         dxphi = irft2(1j*kx*phik)
@@ -205,7 +205,7 @@ def save_data(fl,grpname,ext_flag,**kwargs):
         fl.flush()
 
 class Gensolver:    
-    def __init__(self, solver, f, t0, y0, t1, fsave, fshow=None, fy=None, dtstep=0.1, dtshow=None, dtsave=None, dtfupdate=None, force_update=None, **kwargs):
+    def __init__(self, solver, f, t0, y0, t1, fsave, fshow=None, fy=None, dtstep=0.1, dtshow=None, dtsave=None, dtfupdate=None, force_update=None, use_gpu=False, **kwargs):
         if(dtshow is None):
             dtshow=dtstep
         if(dtsave is None):
@@ -220,6 +220,12 @@ class Gensolver:
         if use_gpu:
             self.cp = cp  # Store CuPy reference
             
+            # Configure Julia to suppress CUDA library loading warnings
+            jl.seval("""
+            ENV["JULIA_CUDA_SOFT_RUNTIME_LOADING"] = "1"
+            ENV["JULIA_CUDA_SILENT"] = "1"
+            """)
+
             # Initialize Julia GPU environment
             jl.seval("using CUDA")
             jl.seval("using OrdinaryDiffEq") 
@@ -249,12 +255,35 @@ class Gensolver:
         if self.use_gpu:
             # Move initial data to GPU if it's not already there
             if not isinstance(y0, cp.ndarray):
-                jl.py_y0 = cp.asarray(y0)
-            else:
-                jl.py_y0 = y0
-                
-            # Convert to CuArray in Julia
-            jl.seval("py_y0_gpu = CuArray(py_y0)")
+                y0 = cp.asarray(y0)
+
+            # Pass the CuPy array pointer to Julia and create a CuArray that shares the same memory
+            jl.y0_ptr = y0.data.ptr
+            jl.y0_shape = y0.shape
+            jl.y0_size = y0.size
+            jl.y0_dtype = str(y0.dtype)
+
+            print(str(y0.dtype))
+
+            jl.seval("""
+                # Create a CuArray that shares memory with the CuPy array
+                if y0_dtype == "complex128"
+                    y0_p = CuPtr{ComplexF64}(convert(UInt64, y0_ptr))
+                    py_y0_gpu = unsafe_wrap(CuArray, y0_p, (y0_size,))
+                elseif y0_dtype == "float64"
+                    y0_p = CuPtr{Float64}(convert(UInt64, y0_ptr))
+                    py_y0_gpu = unsafe_wrap(CuArray, y0_p, (y0_size,))
+                elseif y0_dtype == "complex64"
+                    y0_p = CuPtr{ComplexF32}(convert(UInt64, y0_ptr))
+                    py_y0_gpu = unsafe_wrap(CuArray, y0_p, (y0_size,))
+                elseif y0_dtype == "float32"
+                    y0_p = CuPtr{Float32}(convert(UInt64, y0_ptr))
+                    py_y0_gpu = unsafe_wrap(CuArray, y0_p, (y0_size,))
+                else
+                    error("Unsupported dtype: $y0_dtype")
+                end
+            """)
+
             jl.py_y0 = jl.py_y0_gpu
         else:
             jl.py_y0 = y0
@@ -556,10 +585,10 @@ class JuliaIntegrator:
 if(wecontinue):
     fl=h5.File(output,'r+',libver='latest')
     fl.swmr_mode = True
-    omk,nk=rft2(np.array(fl['fields/om'][-1,])),rft2(np.array(fl['fields/n'][-1,]))
+    omk,nk=rft2(cp.array(fl['fields/om'][-1,])),rft2(cp.array(fl['fields/n'][-1,]))
     phik=-omk/(kx**2+ky**2)
     t0=fl['fields/t'][-1]
-    zk=np.hstack((phik,nk))
+    zk=cp.hstack((phik,nk))
 else:
     fl=h5.File(output,'w',libver='latest')
     fl.swmr_mode = True
@@ -569,7 +598,7 @@ else:
 save_data(fl,'params',ext_flag=False,C=C,kap=kap,nu=nu,D=D,Lx=Lx,Ly=Ly,Npx=Npx, Npy=Npy)
 r=Gensolver(solver,rhs,t0,zk,t1,fsave=save_callback,fshow=fshow,
             dtstep=dtstep,dtshow=dtshow,dtsave=dtsave,
-            reltol=rtol,abstol=atol,use_gpu=True)
+            use_gpu=True,reltol=rtol,abstol=atol)
 
 try:
     r.run()
