@@ -323,42 +323,17 @@ class Gensolver:
         start_time = py_t0
         end_time = py_t1
         
-        # Generate save times (ensure we include t0 and t1)
-        save_times = vcat([start_time], collect(ceil(start_time/dtsave_val)*dtsave_val:dtsave_val:end_time), [end_time])
-        save_times = sort(unique(round.(save_times, digits=3)))
+        # Create periodic callbacks
+        save_callback = PeriodicCallback(save_cb, dtsave_val)
+        show_callback = PeriodicCallback(show_cb, dtshow_val)
         
-        # Generate show times (ensure we include t0 and t1)
-        show_times = vcat([start_time], collect(ceil(start_time/dtshow_val)*dtshow_val:dtshow_val:end_time), [end_time])
-        show_times = sort(unique(round.(show_times, digits=3))) 
-        
-        # Create the callbacks
-        save_callback = PresetTimeCallback(save_times, save_cb)
-        show_callback = PresetTimeCallback(show_times, show_cb)
+        # Add saving at the initial and final times
+        save_at_endpoints = PresetTimeCallback([start_time, end_time], save_cb)
+        show_at_endpoints = PresetTimeCallback([start_time, end_time], show_cb)
         
         # Combine callbacks
-        callback_set = CallbackSet(save_callback, show_callback)
-        
-        # Create the solver with properly named kwargs
-        solver = eval(Meta.parse(solver_str))
-        
-        kwargs = Dict{Symbol, Any}()
-        for (k, v) in pairs(kwargs_py)
-            kwargs[Symbol(k)] = v
-        end
-
-        # Use solve to create the solution and integrator with callbacks
-        integrator = init(prob, solver, 
-                    dtmax=dtmax_val,
-                    save_everystep=false,
-                    dense=false,
-                    callback=callback_set;
-                    kwargs...)
+        callback_set = CallbackSet(save_callback, show_callback, save_at_endpoints, show_at_endpoints)
         """)
-        
-        self.integrator = jl.integrator
-        
-        # Attach a Python-friendly interface
-        self.r = JuliaIntegrator(self.integrator, jl)
 
         # Store other parameters
         self.dtstep, self.dtshow, self.dtsave = dtstep, dtshow, dtsave
@@ -377,65 +352,29 @@ class Gensolver:
         self.jl = jl
 
     def run(self, verbose=True):
-        """Run the integration with the callbacks already configured in Julia"""
-        t0, t1 = self.t0, self.t1
-        r = self.r
-        r.integrate(t1)
+        """Run the integration using solve() directly with the callbacks"""
+        jl = self.jl
         
-        # Note: We don't need to manually call fsave or fshow at the end
-        # because the Julia callbacks will handle this at t1
+        jl.seval("""
+        # Create the solver with properly named kwargs
+        solver = eval(Meta.parse(solver_str))
+        
+        # Convert Python kwargs to Julia kwargs
+        kwargs = Dict{Symbol, Any}()
+        for (k, v) in pairs(kwargs_py)
+            kwargs[Symbol(k)] = v
+        end
 
-class JuliaIntegrator:
-    """Python wrapper for Julia integrator to mimic scipy interface"""
-    
-    def __init__(self, integrator, jl):
-        self.integrator = integrator
-        self.jl = jl
-        
-        # Get current time and solution array
-        self.t = integrator.t
-        self.y = integrator.u
-        
-    def integrate(self, final_time):
-        """Integrate the solution from current time to final_time"""
-        # Avoid integration if already at final time
-        if abs(self.t - final_time) < 1e-10:
-            return
-        
-        jl.final_time = final_time
-
-        try:
-            # Use the proper function to integrate to the final time directly
-            self.jl.seval("""
-            # Find next multiple of dtshow_val after start_time
-            start_time = integrator.t
-            first_report = ceil(start_time / dtshow_val) * dtshow_val
-            
-            # Create report times from first_report to final_time in steps of dtshow_val
-            report_times = first_report:dtshow_val:final_time
-            
-            # Add integer time points if they're not already included
-            integer_times = ceil(start_time):1.0:floor(final_time)
-            all_report_times = sort(unique(vcat(collect(report_times), collect(integer_times))))
-            
-            # Set up step points - first add the final time to ensure we stop there
-            all_times = sort(unique(vcat(all_report_times, [final_time])))
-            all_times = round.(all_times, digits=3)  
-            
-            # Step through the integration manually to the specified points
-            for next_time in all_times
-                if next_time > integrator.t
-                    step!(integrator, next_time - integrator.t, true)
-                end
-            end
-            """)
-        except Exception as e:
-            print(f"Exception during integration: {e}")
-            raise
-        
-        # Get updated time and solution
-        self.t = self.jl.integrator.t 
-        self.y = self.jl.integrator.u 
+        # Directly solve the ODE problem
+        sol = solve(prob, solver, 
+                   dtmax=dtmax_val,
+                   reltol=rtol_val,
+                   abstol=atol_val,
+                   save_everystep=false,
+                   dense=false,
+                   callback=callback_set;
+                   kwargs...)
+        """)
 
 #%% Run the simulation
 
