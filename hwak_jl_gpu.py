@@ -14,7 +14,7 @@ from juliacall import Main as jl
 
 #%% Define parameters
 
-Npx,Npy=256,256
+Npx,Npy=1024,1024
 Nx,Ny=2*int(np.floor(Npx/3)),2*int(np.floor(Npy/3))
 Lx,Ly=16*np.pi,16*np.pi
 dkx,dky=2*np.pi/Lx,2*np.pi/Ly
@@ -33,7 +33,7 @@ C=1.0
 nu=1e-3*kymax(ky0,1.0,1.0)**4/kymax(ky0,kap,C)**4
 D=1e-3*kymax(ky0,1.0,1.0)**4/kymax(ky0,kap,C)**4
 
-solver='jl.CKLLSRK43_2'
+solver='jl.CKLLSRK65_4M_4R'
 # solver='jl.CKLLSRK43' # Uncomment to use a low-storage method
 output = 'out_'+solver.replace('.','_')+'_gpu_kap_'+f'{kap:.1f}'.replace('.', '_') + '_C_' + f'{C:.1f}'.replace('.', '_') + '.h5'
 
@@ -91,8 +91,8 @@ def fshow(t, zk):
     # Print without elapsed time
     print(f"Gam={Gam:.3g}, Ktot={Ktot:.3g}, Kbar/Ktot={Kbar/Ktot*100:.1f}%")
 
-def rhs(dy, y, p, t):
-    """GPU-aware RHS function for Julia's ODE solvers
+def rhs(dzkdt, zk, p, t):
+    """RHS function for Julia's ODE solvers
     
     Arguments:
         dy: output array where derivatives should be stored (CuArray)
@@ -100,9 +100,9 @@ def rhs(dy, y, p, t):
         p: parameters (unused)
         t: current time
     """
-    # Always assume we're on GPU
-    zk = cp.array(y, copy=False)
-    dzkdt = cp.array(dy, copy=False)
+    # # Always assume we're on GPU
+    # zk = cp.array(y, copy=False)
+    # dzkdt = cp.array(dy, copy=False)
     
     # Split zk into phik and nk
     phik, nk = zk[:int(zk.size/2)], zk[int(zk.size/2):]
@@ -228,48 +228,10 @@ class Gensolver:
         ct = time()
         """)
 
-        # Fix the jac_prototype function to return an actual matrix pattern instead of a function
-        jl.seval("""
-        # Define a proper function that returns an actual sparse matrix
-        function jac_pattern(u, p, t)
-            n = length(u)
-            half_n = div(n, 2)
-            
-            # Create a sparse matrix with expected sparsity pattern
-            J = spzeros(ComplexF64, n, n)
-            
-            # For illustrative purposes, we set the diagonals for phik and nk
-            # and cross-coupling between phik and nk based on physics
-            
-            # self-coupling for phik variables
-            for i in 1:half_n
-                J[i, i] = 1.0+0.0im  # Mark diagonal entries for phik
-            end
-            
-            # self-coupling for nk variables
-            for i in half_n+1:n
-                J[i, i] = 1.0+0.0im  # Mark diagonal entries for nk
-            end
-            
-            # coupling between phik and nk (cross-terms)
-            for i in 1:half_n
-                J[i, i+half_n] = 1.0+0.0im  # phik depends on nk
-                J[i+half_n, i] = 1.0+0.0im  # nk depends on phik
-            end
-            
-            return J
-        end
-
-        # Create a concrete Jacobian pattern once
-        concrete_jac = jac_pattern(py_y0, nothing, py_t0)
-        """)
-
         # Set up the Julia ODE problem and solver with GPU awareness
         jl.seval("""
-        # Create the ODE problem using the GPU wrapper
-        f = ODEFunction(py_rhs, jac_prototype=concrete_jac)
-        prob = ODEProblem(f, py_y0, (py_t0, py_t1))
-        # prob = ODEProblem(py_rhs, py_y0, (py_t0, py_t1))
+        # Create the ODE problem with the GPU-aware RHS function
+        prob = ODEProblem(py_rhs, py_y0, (py_t0, py_t1))
         """)
         
         self.problem = jl.prob  # Store the Julia problem
@@ -280,24 +242,6 @@ class Gensolver:
             solver_name = "Tsit5()"  # 5th order explicit RK method - efficient for non-stiff problems
         elif solver == 'jl.DP8':
             solver_name = "DP8()"    # 8th order explicit RK - higher accuracy, good for smooth problems
-        # Add SDIRK methods (Jacobian optional, but better with it)
-        elif solver == 'jl.TRBDF2':
-            solver_name = "TRBDF2(autodiff=false)"  # 2nd order SDIRK method - robust for stiff problems
-        elif solver == 'jl.Kvaerno3':
-            solver_name = "Kvaerno3(autodiff=false)"  # 3rd order SDIRK method by Kvaerno
-        elif solver == 'jl.Kvaerno4':
-            solver_name = "Kvaerno4(autodiff=false)"  # 4th order SDIRK method by Kvaerno
-        elif solver == 'jl.KenCarp4':
-            solver_name = "KenCarp4(autodiff=false)"  # 4th order SDIRK method by Kennedy & Carpenter
-        # Add Rosenbrock methods (Jacobian needed)
-        elif solver == 'jl.Rosenbrock23':
-            solver_name = "Rosenbrock23(autodiff=false)"  # 2nd/3rd order Rosenbrock method - good for stiff problems
-        elif solver == 'jl.Rodas3':
-            solver_name = "Rodas3(autodiff=false)"  # 3rd order Rosenbrock method - balanced accuracy and performance    
-        elif solver == 'jl.Rodas4':
-            solver_name = "Rodas4(autodiff=false)"  # 4th order Rosenbrock method - higher accuracy for stiff problems
-        elif solver == 'jl.Rodas5':
-            solver_name = "Rodas5(autodiff=false)"  # 5th order Rosenbrock method - even higher accuracy
         # Add specific low-storage Runge-Kutta methods
         elif solver == 'jl.CKLLSRK43_2':
             solver_name = "CKLLSRK43_2()"  # 4-stage, 3rd order low-storage scheme
@@ -305,6 +249,10 @@ class Gensolver:
             solver_name = "CKLLSRK54_3N_3R()"  # 5-stage, 4th order, 3-register scheme
         elif solver == 'jl.CKLLSRK65_4M_4R':
             solver_name = "CKLLSRK65_4M_4R()"  # 6-stage, 5th order, 4-register scheme
+        elif solver == 'jl.CKLLSRK75_4M_5R':
+            solver_name = "CKLLSRK75_4M_5R()"  # 7-stage, 5th order, 4-register scheme    
+        elif solver == 'jl.CKLLSRK95_4M':
+            solver_name = "CKLLSRK95_4M()"  # 9-stage, 5th order low-storage scheme
 
         # Set up solver parameters
         jl.rtol_val = kwargs.get('rtol', 1e-7)
